@@ -412,6 +412,7 @@ class DataTransferDependency:
                             tenant=settings.data_operation.data_transfer.tenant,
                             ttl=settings.data_operation.data_transfer.ttl,
                             system_name=system_name,
+                            bucket_name_prefix=settings.data_operation.data_transfer.bucket_name_prefix,
                         )
 
     # To allow for dependency override eq checks for class equality

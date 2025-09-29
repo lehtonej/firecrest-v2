@@ -243,6 +243,9 @@ class S3DataTransfer(BaseDataTransfer):
         default_factory=BucketLifecycleConfiguration,
         description="Lifecycle policy settings for auto-deleting files after a given number of days.",
     )
+    bucket_name_prefix: Optional[str] = Field(
+        None, description="Optional prefix to apply to S3 bucket names."
+    )
 
 
 class WormholeDataTransfer(BaseDataTransfer):

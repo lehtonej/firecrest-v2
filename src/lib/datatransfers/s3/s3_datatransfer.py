@@ -63,6 +63,7 @@ class S3Datatransfer(DataTransferBase):
         tenant,
         ttl,
         system_name,
+        bucket_name_prefix,
     ):
         super().__init__(scheduler_client=scheduler_client, directives=directives)
         self.s3_client_private = s3_client_private
@@ -77,6 +78,7 @@ class S3Datatransfer(DataTransferBase):
         self.tenant = tenant
         self.ttl = ttl
         self.system_name = system_name
+        self.bucket_name_prefix = bucket_name_prefix
 
     async def upload(
         self,
@@ -89,13 +91,16 @@ class S3Datatransfer(DataTransferBase):
 
         job_id = None
         object_name = f"{str(uuid.uuid4())}/{os.path.basename(target.path)}"
+        bucket_name = username
+        if self.bucket_name_prefix:
+            bucket_name = f"{self.bucket_name_prefix}{bucket_name}"
 
         async with self.s3_client_private:
             try:
-                await self.s3_client_private.create_bucket(**{"Bucket": username})
+                await self.s3_client_private.create_bucket(**{"Bucket": bucket_name})
                 # Update lifecycle only for new buckets (not throwing the BucketAlreadyOwnedByYou exception)
                 await self.s3_client_private.put_bucket_lifecycle_configuration(
-                    Bucket=username,
+                    Bucket=bucket_name,
                     LifecycleConfiguration=self.bucket_lifecycle_configuration.to_json(),
                 )
             except self.s3_client_private.exceptions.BucketAlreadyOwnedByYou:
@@ -103,7 +108,7 @@ class S3Datatransfer(DataTransferBase):
 
             upload_id = (
                 await self.s3_client_private.create_multipart_upload(
-                    Bucket=username, Key=object_name
+                    Bucket=bucket_name, Key=object_name
                 )
             )["UploadId"]
 
@@ -117,7 +122,7 @@ class S3Datatransfer(DataTransferBase):
                         self.s3_client_public,
                         "upload_part",
                         {
-                            "Bucket": username,
+                            "Bucket": bucket_name,
                             "Key": object_name,
                             "UploadId": upload_id,
                             "PartNumber": part_number,
@@ -130,7 +135,7 @@ class S3Datatransfer(DataTransferBase):
             complete_external_multipart_upload_url = await _generate_presigned_url(
                 self.s3_client_public,
                 "complete_multipart_upload",
-                {"Bucket": username, "Key": object_name, "UploadId": upload_id},
+                {"Bucket": bucket_name, "Key": object_name, "UploadId": upload_id},
                 self.tenant,
                 self.ttl,
                 "POST",
@@ -139,7 +144,7 @@ class S3Datatransfer(DataTransferBase):
             get_download_url = await _generate_presigned_url(
                 self.s3_client_private,
                 "get_object",
-                {"Bucket": username, "Key": object_name},
+                {"Bucket": bucket_name, "Key": object_name},
                 self.tenant,
                 self.ttl,
             )
@@ -147,7 +152,7 @@ class S3Datatransfer(DataTransferBase):
             head_download_url = await _generate_presigned_url(
                 self.s3_client_private,
                 "head_object",
-                {"Bucket": username, "Key": object_name},
+                {"Bucket": bucket_name, "Key": object_name},
                 self.tenant,
                 self.ttl,
             )
@@ -204,6 +209,10 @@ class S3Datatransfer(DataTransferBase):
 
         job_id = None
 
+        bucket_name = username
+        if self.bucket_name_prefix:
+            bucket_name = f"{self.bucket_name_prefix}{bucket_name}"
+
         stat = StatCommand(source.path, True)
         async with self.ssh_client.get_client(username, access_token) as client:
             stat_output = await client.execute(stat)
@@ -215,14 +224,14 @@ class S3Datatransfer(DataTransferBase):
                 await self.s3_client_private.create_bucket(**{"Bucket": username})
                 # Update lifecycle only for new buckets (not throwing the BucketAlreadyOwnedByYou exception)
                 await self.s3_client_private.put_bucket_lifecycle_configuration(
-                    Bucket=username,
+                    Bucket=bucket_name,
                     LifecycleConfiguration=self.bucket_lifecycle_configuration.to_json(),
                 )
             except self.s3_client_private.exceptions.BucketAlreadyOwnedByYou:
                 pass
             upload_id = (
                 await self.s3_client_private.create_multipart_upload(
-                    Bucket=username, Key=object_name
+                    Bucket=bucket_name, Key=object_name
                 )
             )["UploadId"]
 
@@ -236,7 +245,7 @@ class S3Datatransfer(DataTransferBase):
                         self.s3_client_private,
                         "upload_part",
                         {
-                            "Bucket": username,
+                            "Bucket": bucket_name,
                             "Key": object_name,
                             "UploadId": upload_id,
                             "PartNumber": part_number,
@@ -249,7 +258,7 @@ class S3Datatransfer(DataTransferBase):
             complete_multipart_url = await _generate_presigned_url(
                 self.s3_client_private,
                 "complete_multipart_upload",
-                {"Bucket": username, "Key": object_name, "UploadId": upload_id},
+                {"Bucket": bucket_name, "Key": object_name, "UploadId": upload_id},
                 self.tenant,
                 self.ttl,
                 "POST",
@@ -285,7 +294,7 @@ class S3Datatransfer(DataTransferBase):
             get_download_url = await _generate_presigned_url(
                 self.s3_client_public,
                 "get_object",
-                {"Bucket": username, "Key": object_name},
+                {"Bucket": bucket_name, "Key": object_name},
                 self.tenant,
                 self.ttl,
             )
