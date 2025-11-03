@@ -106,6 +106,11 @@ firecrest:
       ##    jwk_algorithm: "RS512"
       # jwk_algorithm: "RS256"
 
+      ## audience: Set the value for expected audience claim for JWT validation. If not specified, audience validation is disabled.
+      ## example:
+      ##    audience: "https://firecrest-api.example.com"
+      # audience: None
+
     ## Authorization settings via OpenFGA
     # authorization:
       ##   url: endpoint to query the AuthZ service

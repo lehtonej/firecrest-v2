@@ -41,6 +41,10 @@ class Oidc(CamelModel):
         None,
         description="Explicitly set the expected JWT signing algorithm if JWKs endpoint doesn't include 'alg' parameter for the signing key."
     )
+    audience: Optional[str] = Field(
+        None,
+        description="Expected audience for JWT token claim validation."
+    )
 
 
 class LoadFileSecretStr(SecretStr):

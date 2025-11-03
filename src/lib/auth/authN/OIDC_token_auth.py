@@ -20,10 +20,11 @@ class OIDCTokenAuth(AuthenticationService):
 
     public_keys = {}
 
-    def __init__(self, public_certs: List[str] = None, username_claim: str = None, jwk_algorithm: str = None):
+    def __init__(self, public_certs: List[str] = None, username_claim: str = None, jwk_algorithm: str = None, audience: str = None):
 
         self.username_claim = username_claim
         self.jwk_algorithm = jwk_algorithm
+        self.audience = audience
 
         keys = []
         s = requests.Session()
@@ -76,7 +77,10 @@ class OIDCTokenAuth(AuthenticationService):
         public_key = self.public_keys[identifier]
 
         options = {"verify_signature": True, "verify_aud": False, "verify_exp": True}
-        decoded_token = jwt.decode(token=access_token, key=public_key, options=options)
+        if self.audience:
+            options.update({"verify_aud": True})
+
+        decoded_token = jwt.decode(token=access_token, key=public_key, options=options, audience=self.audience)
         return ApiAuthModel.build_from_oidc_decoded_token(
             decoded_token=decoded_token, username_claim=self.username_claim
         )
