@@ -87,6 +87,7 @@ def tracing_log_middleware(request: Request, username: str, status_code: int, he
     log_data["endpoint"] = endpoint
     log_data["resource"] = resource
     log_data["status_code"] = status_code
+    log_data["remote_host"] = request.client.host
     
     for header in headers_to_trace:
         if header['input'] in request.headers:
