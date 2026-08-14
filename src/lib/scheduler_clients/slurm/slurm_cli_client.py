@@ -258,6 +258,7 @@ class SlurmCliClient(SlurmBaseClient):
 
         accounts = []
         if accounts_result and isinstance(accounts_result, list):
+            accounts_result = list(dict.fromkeys(accounts_result))
             for account in accounts_result:
                 accounts.append(
                     {
