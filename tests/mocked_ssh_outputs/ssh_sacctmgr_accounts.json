@@ -1,6 +1,6 @@
 {
-    "stdout": "staff",
+    "stdout": "staff|part01",
     "stderr": "",
     "exit_code": 0,
-    "command": "sacctmgr show assoc user='test-user' format=account -n"
+    "command": "sacctmgr show assoc user='test-user' format=account,partition -n --parsable2"
 }
