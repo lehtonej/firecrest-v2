@@ -19,7 +19,7 @@ class SacctmgrAccountsCommand(SacctmgrBaseCommand):
         cmd = [super().get_command()]
         cmd += ["show assoc"]
         cmd += [f"user='{self.username}'"]
-        cmd += ["format=account -n"]
+        cmd += ["format=account -n --parsable2"]
         return " ".join(cmd)
 
     def parse_output(self, stdout: str, stderr: str, exit_status: int = 0):
