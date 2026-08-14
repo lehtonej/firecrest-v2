@@ -258,11 +258,12 @@ class SlurmCliClient(SlurmBaseClient):
 
         accounts = []
         if accounts_result and isinstance(accounts_result, list):
-            for account in accounts_result:
+            for association in accounts_result:
                 accounts.append(
                     {
-                        "name": account,
-                        "default": account == default_account,
+                        "name": association["account"],
+                        "partition": (association["partition"] if len(association["partition"]) > 0 else None),
+                        "default": association['account'] == default_account,
                     }
                 )
         if accounts:

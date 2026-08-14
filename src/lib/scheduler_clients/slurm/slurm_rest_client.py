@@ -366,6 +366,7 @@ class SlurmRestClient(SlurmBaseClient):
                     accounts.append(
                         {
                             "name": association["account"],
+                            "partition": (association["partition"] if len(association["partition"]) > 0 else None),
                             "default": (True if association["is_default"] else False),
                         }
                     )

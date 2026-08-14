@@ -19,7 +19,8 @@ class SacctmgrAccountsCommand(SacctmgrBaseCommand):
         cmd = [super().get_command()]
         cmd += ["show assoc"]
         cmd += [f"user='{self.username}'"]
-        cmd += ["format=account -n"]
+        cmd += ["format=account,partition"]
+        cmd += ["-n --parsable2"]
         return " ".join(cmd)
 
     def parse_output(self, stdout: str, stderr: str, exit_status: int = 0):
@@ -32,7 +33,17 @@ class SacctmgrAccountsCommand(SacctmgrBaseCommand):
         for line in stdout.split("\n"):
             if line.strip() == "":
                 continue
-            accounts.append(line.strip())
+
+            assoc_info = line.split("|")
+            account_name = assoc_info[0]
+            assoc_partition = assoc_info[1]
+
+            accounts.append(
+                {
+                    "account": account_name,
+                    "partition": assoc_partition,
+                }
+            )
 
         if len(accounts) == 0:
             return None

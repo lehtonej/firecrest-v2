@@ -169,4 +169,5 @@ class PartitionModel(CamelModel):
 
 class AccountsModel(CamelModel):
     name: str
+    partition: Optional[str] = Field(default=None, nullable=True)
     default: bool

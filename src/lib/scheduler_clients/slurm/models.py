@@ -265,8 +265,12 @@ class SlurmPing(SchedPing):
 
 
 class SlurmAccounts(AccountsModel):
-    pass
-
+    name: str = Field(validation_alias=AliasChoices("name"))
+    partition: Optional[str] = Field(
+        validation_alias=AliasChoices("partition"),
+        default=None,
+        nullable=True,
+    )
 
 class SlurmPartitions(PartitionModel):
     name: str = Field(validation_alias=AliasChoices("partitionName", "PartitionName"))
