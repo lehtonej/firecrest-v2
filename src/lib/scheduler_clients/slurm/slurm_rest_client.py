@@ -360,15 +360,20 @@ class SlurmRestClient(SlurmBaseClient):
             if response.status != status.HTTP_200_OK:
                 await _slurm_unexpected_response(response)
             accounts = []
+            accounts_result = {}
             result = await response.json()
             if "associations" in result:
                 for association in result["associations"]:
-                    accounts.append(
-                        {
-                            "name": association["account"],
-                            "default": (True if association["is_default"] else False),
-                        }
-                    )
+                    account = association["account"]
+                    if account not in accounts_result:
+                        accounts_result[account] = (
+                            {
+                                "name": account,
+                                "default": (True if association["is_default"] else False),
+                            }
+                        )
+
+            accounts = list(accounts_result.values())
             if accounts:
                 accounts = [
                     SlurmAccounts.model_validate(account) for account in accounts
