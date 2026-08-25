@@ -170,9 +170,16 @@ class SlurmCliClient(SlurmBaseClient):
         if not isinstance(script_info, list):
             script_info = []
 
+        scripts_by_id = {
+            s["jobId"]: s
+            for s in script_info
+            if isinstance(s, dict) and s.get("jobId") is not None
+        }
+
         jobs = []
-        for i, job in enumerate(job_info):
-            script = script_info[i] if i < len(script_info) else {}
+        for job in job_info:
+            key = job.get("jobId") or job.get("JobId")
+            script = scripts_by_id.get(key, {})
             jobs.append(SlurmJobMetadata(**{**job, **script}))
 
         return jobs
