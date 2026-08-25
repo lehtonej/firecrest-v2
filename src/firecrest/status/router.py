@@ -182,12 +182,26 @@ async def get_userinfo(
     username = ApiAuthHelper.get_auth().username
     access_token = ApiAuthHelper.get_access_token()
     try:
-        id = IdCommand(system.ssh.timeout.command_execution)
+        id_cmd = IdCommand(system.ssh.timeout.command_execution)
         accounts = await scheduler_client.get_accounts(username, access_token)
-        async with ssh_client.get_client(username, access_token) as (client):
-            output = await client.execute(id)
-            output["accounts"] = accounts
-            return output
+        async with ssh_client.get_client(username, access_token) as client:
+            id_result = await client.execute(id_cmd)
+            if isinstance(id_result, Exception):
+                raise id_result
+            if isinstance(accounts, Exception):
+                raise accounts
+            if id_result is None:
+                raise RuntimeError("Failed to retrieve user information")
+            user = id_result["user"]
+            groups = [
+                {
+                    "name": group["name"],
+                    "id": group["id"],
+                    "default": group["name"] == id_result["group"]["name"],
+                }
+                for group in id_result["groups"]
+            ]
+            return {"user": user, "groups": groups, "accounts": accounts}
     except Exception as exc:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)

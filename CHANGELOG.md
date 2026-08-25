@@ -19,9 +19,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- ***⚠️ API Breaking*** Refactored UserInfo response, group and groups objects have been merged.
 - ***⚠️ API Breaking*** `GET /compute/{system_name}/jobs` now defaults to a `24h` historical lookback window. Previously the lookback was a fixed 7 days on SSH/CLI-based clusters, and unbounded on REST-based clusters (no time filter was sent to `slurmdb`). Pass `time_window=7d` for the widest supported window.
 
 ### Fixed
+
 
 ## [2.5.6]
 
