@@ -125,7 +125,7 @@ class SlurmCliClient(SlurmBaseClient):
 
     async def get_job_metadata(
         self, job_id: str, username: str, jwt_token: str
-    ) -> List[SlurmJobMetadata]:
+    ) -> List[SlurmJobMetadata] | None:
 
         # Note:
         # sacct --format="StdOut,StdIn,StdErr" and batch-script require custom config
