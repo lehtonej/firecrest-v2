@@ -20,7 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - Job metadata no longer fails with `object of type 'NoneType' has no len()` when the batch script is unavailable, e.g. for jobs purged from the Slurm controller or not submitted with `sbatch`. The metadata is now returned with a null `script`.
-- In use cases docs, updated versions of `flask` and `pip`
+- Demo Use Cases: updated Flask to 3.1.3 and pip to 26.1.2 to address vulnerabilities ([CVE-2026-3219](https://nvd.nist.gov/vuln/detail/CVE-2026-3219), [CVE-2026-6357](https://nvd.nist.gov/vuln/detail/CVE-2026-6357), [CVE-2026-8643](https://nvd.nist.gov/vuln/detail/CVE-2026-8643), and [CVE-2026-27205](https://nvd.nist.gov/vuln/detail/CVE-2026-27205))
 
 ## [2.5.6]
 
