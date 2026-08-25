@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- `name` parameter in `GET /compute/jobs` request
+- Added `name` query parameter in `GET /compute/jobs` request
 - Added `time_window` query parameter to `GET /compute/{system_name}/jobs` to control how far back historical (completed, failed, cancelled...) jobs are looked up. Accepted values: `1h`, `8h`, `24h`, `3d`, `7d`.
 
 ### Changed

@@ -62,7 +62,8 @@ async def helper_test_userinfo(
     ):
         response = client.get(f"/status/{cluster_name}/userinfo")
         assert response.status_code == 200
-        assert UserInfoResponse(**response.json()) is not None
+        user_info = UserInfoResponse(**response.json())
+        assert any(g.default and g.name == "root" for g in user_info.groups)
 
 
 async def helper_test_get_job(
