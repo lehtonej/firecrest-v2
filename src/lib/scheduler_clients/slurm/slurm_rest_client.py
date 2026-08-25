@@ -222,7 +222,7 @@ class SlurmRestClient(SlurmBaseClient):
 
     async def get_job_metadata(
         self, job_id: str, username: str, jwt_token: str
-    ) -> List[SlurmJobMetadata]:
+    ) -> List[SlurmJobMetadata] | None:
         # Until version 4.05.1 slurmdb/job end-point does not provide stdout & stderr information
         raise NotImplementedError("This method is not supported by the Slurm REST API")
 

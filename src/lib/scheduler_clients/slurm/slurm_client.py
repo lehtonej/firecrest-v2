@@ -31,7 +31,7 @@ class SlurmClient(SlurmBaseClient):
         api_url: str | None,
         timeout: int | None,
         username_claim: str | None,
-        connection_mode: SchedulerConnectionMode = SchedulerConnectionMode.ssh
+        connection_mode: SchedulerConnectionMode = SchedulerConnectionMode.ssh,
     ):
 
         self.ssh_client = ssh_client
@@ -106,7 +106,7 @@ class SlurmClient(SlurmBaseClient):
 
     async def get_job_metadata(
         self, job_id: str, username: str, jwt_token: str
-    ) -> List[SlurmJobMetadata]:
+    ) -> List[SlurmJobMetadata] | None:
         if self.slurm_cli_client:
             return await self.slurm_cli_client.get_job_metadata(
                 job_id, username, jwt_token
