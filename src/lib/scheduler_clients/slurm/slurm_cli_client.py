@@ -35,6 +35,7 @@ from lib.scheduler_clients.slurm.cli_commands.scontrol_reservations_command impo
 )
 from lib.scheduler_clients.slurm.cli_commands.sinfo_command import SinfoCommand
 from lib.scheduler_clients.slurm.cli_commands.srun_command import SrunCommand
+from lib.scheduler_clients.models import JobsTimeWindow
 from lib.scheduler_clients.slurm.models import (
     SlurmAccounts,
     SlurmJob,
@@ -124,7 +125,7 @@ class SlurmCliClient(SlurmBaseClient):
 
     async def get_job_metadata(
         self, job_id: str, username: str, jwt_token: str
-    ) -> List[SlurmJobMetadata]:
+    ) -> List[SlurmJobMetadata] | None:
 
         # Note:
         # sacct --format="StdOut,StdIn,StdErr" and batch-script require custom config
@@ -155,30 +156,45 @@ class SlurmCliClient(SlurmBaseClient):
         if not isinstance(results[cmd_result_i], list) and len(results) == 4:
             cmd_result_i = 2
 
+        job_info = results[cmd_result_i]
+        script_info = results[cmd_result_i + 1]
+
         # check if job was found
-        if results[cmd_result_i] is None:
+        if job_info is None:
             return None
-        if isinstance(results[cmd_result_i], Exception):
-            return results[cmd_result_i]
+        if isinstance(job_info, Exception):
+            raise SlurmError("Error executing Slurm command.") from job_info
+
+        # script info is optional: it is only stored in the accounting database when
+        # slurm.conf sets AccountingStoreFlags=job_script
+        if not isinstance(script_info, list):
+            script_info = []
+
+        scripts_by_id = {
+            s["jobId"]: s
+            for s in script_info
+            if isinstance(s, dict) and s.get("jobId") is not None
+        }
 
         jobs = []
-        for i in range(len(results[cmd_result_i])):
-            # if script info is not available, continue
-            if i >= len(results[cmd_result_i + 1]):
-                continue
-            jobs.append(
-                SlurmJobMetadata(
-                    **{**results[cmd_result_i][i], **results[cmd_result_i + 1][i]}
-                )
-            )
+        for job in job_info:
+            key = job.get("jobId") or job.get("JobId")
+            script = scripts_by_id.get(key, {})
+            jobs.append(SlurmJobMetadata(**{**job, **script}))
 
         return jobs
 
     async def get_jobs(
-        self, username: str, jwt_token: str, allusers: bool = False, account: str = None
+        self,
+        username: str,
+        jwt_token: str,
+        allusers: bool = False,
+        account: str = None,
+        name: str = None,
+        time_window: JobsTimeWindow = None,
     ) -> List[SlurmJob] | None:
-        sacct = SacctCommand(username, None, allusers, account)
-        squeue = SqueueCommand(username, None, allusers, account)
+        sacct = SacctCommand(username, None, allusers, account, name, time_window)
+        squeue = SqueueCommand(username, None, allusers, account, name)
 
         commands = [
             # sacct has precedence over squeue, as it contains more complete job info, including finished jobs

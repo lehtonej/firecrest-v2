@@ -5,7 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [2.5.6] - OPEN
+## [2.6.0]
+
+### Added
+
+- Added `name` query parameter in `GET /compute/jobs` request
+- Added `time_window` query parameter to `GET /compute/{system_name}/jobs` to control how far back historical (completed, failed, cancelled...) jobs are looked up. Accepted values: `1h`, `8h`, `24h`, `3d`, `7d`.
+
+### Changed
+
+- ***⚠️ API Breaking*** Refactored UserInfo response, group and groups objects have been merged.
+- ***⚠️ API Breaking*** `GET /compute/{system_name}/jobs` now defaults to a `24h` historical lookback window. Previously the lookback was a fixed 7 days on SSH/CLI-based clusters, and unbounded on REST-based clusters (no time filter was sent to `slurmdb`). Pass `time_window=7d` for the widest supported window.
+
+### Fixed
+
+- Job metadata no longer fails with `object of type 'NoneType' has no len()` when the batch script is unavailable, e.g. for jobs purged from the Slurm controller or not submitted with `sbatch`. The metadata is now returned with a null `script`.
+- Demo Use Cases: updated Flask to 3.1.3 and pip to 26.1.2 to address vulnerabilities ([CVE-2026-3219](https://nvd.nist.gov/vuln/detail/CVE-2026-3219), [CVE-2026-6357](https://nvd.nist.gov/vuln/detail/CVE-2026-6357), [CVE-2026-8643](https://nvd.nist.gov/vuln/detail/CVE-2026-8643), and [CVE-2026-27205](https://nvd.nist.gov/vuln/detail/CVE-2026-27205))
+
+## [2.5.6]
 
 ### Added
 
