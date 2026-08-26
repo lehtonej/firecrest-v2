@@ -64,7 +64,7 @@ async def helper_test_userinfo(
         assert response.status_code == 200
         user_info = UserInfoResponse(**response.json())
         assert any(g.default and g.name == "root" for g in user_info.groups)
-
+        assert len(user_info.accounts) == 2
 
 async def helper_test_get_job(
     client,
