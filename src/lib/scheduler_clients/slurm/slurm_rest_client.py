@@ -399,21 +399,18 @@ class SlurmRestClient(SlurmBaseClient):
             log_backend_http_scheduler(url, response.status)
             if response.status != status.HTTP_200_OK:
                 await _slurm_unexpected_response(response)
-            accounts = []
-            accounts_result = {}
+            accounts_by_name = {}
             result = await response.json()
             if "associations" in result:
                 for association in result["associations"]:
-                    account = association["account"]
-                    if account not in accounts_result:
-                        accounts_result[account] = (
-                            {
-                                "name": account,
-                                "default": (True if association["is_default"] else False),
-                            }
-                        )
+                    account_name = association["account"]
+                    account = accounts_by_name.setdefault(
+                        account_name,
+                        {"name": account_name, "default": False}
+                    )
+                    account["default"] = account["default"] or bool(association["is_default"])
 
-            accounts = list(accounts_result.values())
+            accounts = list(accounts_by_name.values())
             if accounts:
                 accounts = [
                     SlurmAccounts.model_validate(account) for account in accounts
