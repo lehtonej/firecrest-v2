@@ -15,6 +15,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   as little as 5 seconds left are now accepted, where 30 seconds was
   previously required.
 
+### Fixed
+- Truncated account names in `userinfo` endpoint results on Slurm CLI system (#216)
+- De-duplicated account names returned by `userinfo` endpoint, when an account had more than one partition association.
+
 ## [2.6.0]
 
 ### Added
