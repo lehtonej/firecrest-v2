@@ -3,8 +3,10 @@
 # Please, refer to the LICENSE file in the root directory.
 # SPDX-License-Identifier: BSD-3-Clause
 
+import asyncio
 import json
 import aiohttp
+from datetime import datetime, timedelta, timezone
 from fastapi import status
 from socket import AF_INET
 from typing import Optional, List
@@ -16,7 +18,9 @@ import urllib
 from lib.exceptions import SlurmAuthTokenError, SlurmError
 
 # Models
+from lib.scheduler_clients.models import JobsTimeWindow, TIME_WINDOW_DURATIONS
 from lib.scheduler_clients.slurm.models import (
+    SlurmAccounts,
     SlurmJob,
     SlurmJobDescription,
     SlurmJobMetadata,
@@ -58,6 +62,21 @@ async def _slurm_unexpected_response(response):
     )
 
 
+# `start_time`/`end_time` on /slurmdb/v{version}/jobs are only explicitly
+# documented as accepting a plain Unix timestamp starting at API v0.0.41
+# API v0.0.40 accepts timestamp.
+# Prior versions are treated as accepting a relative time spec, e.g. "now-1hours" or "now-3days".
+_EPOCH_START_TIME_MIN_API_VERSION = Version("0.0.40")
+
+
+def _time_window_start_time(time_window: JobsTimeWindow, api_version: str) -> str:
+    amount, unit = TIME_WINDOW_DURATIONS[time_window]
+    if Version(api_version) >= _EPOCH_START_TIME_MIN_API_VERSION:
+        start_datetime = datetime.now(timezone.utc) - timedelta(**{unit: amount})
+        return str(int(start_datetime.timestamp()))
+    return f"now-{amount}{unit}"
+
+
 class SlurmRestClient(SlurmBaseClient):
     aiohttp_client: Optional[aiohttp.ClientSession] = None
 
@@ -92,7 +111,7 @@ class SlurmRestClient(SlurmBaseClient):
         job_description: SlurmJobDescription,
         username: str,
         jwt_token: str,
-    ) -> int | None:
+    ) -> str | None:
 
         client = await self.get_aiohttp_client()
         timeout = aiohttp.ClientTimeout(total=self.timeout)
@@ -132,7 +151,10 @@ class SlurmRestClient(SlurmBaseClient):
             if response.status != status.HTTP_200_OK:
                 await _slurm_unexpected_response(response)
             job_submit_result = await response.json()
-        return job_submit_result["job_id"]
+        job_id = job_submit_result.get("job_id")
+        if job_id is None:
+            return None
+        return str(job_id)
 
     async def attach_command(
         self,
@@ -140,7 +162,7 @@ class SlurmRestClient(SlurmBaseClient):
         job_id: str,
         username: str,
         jwt_token: str,
-    ) -> int | None:
+    ) -> None:
         pass
 
     async def get_job(
@@ -153,67 +175,128 @@ class SlurmRestClient(SlurmBaseClient):
         client = await self.get_aiohttp_client()
         timeout = aiohttp.ClientTimeout(total=self.timeout)
         headers = _slurm_headers(username, jwt_token, self.username_claim)
-        url = f"{self.api_url}/slurmdb/v{self.api_version}/job/{job_id}"
-        async with client.get(
-            url=url,
-            headers=headers,
-            timeout=timeout,
-        ) as response:
-            log_backend_http_scheduler(url, response.status)
-            if response.status != status.HTTP_200_OK:
-                await _slurm_unexpected_response(response)
-            job_result = await response.json()
 
-            # Note: starting from API version v0.0.39 this filter can be set as query param
-            jobs = list(
-                filter(
-                    lambda job: allusers or job["user"] == username, job_result["jobs"]
+        slurmdb_url = f"{self.api_url}/slurmdb/v{self.api_version}/job/{job_id}"
+        slurm_url = f"{self.api_url}/slurm/v{self.api_version}/job/{job_id}"
+
+        async def fetch_jobs(url: str) -> list:
+            async with client.get(
+                url=url, headers=headers, timeout=timeout
+            ) as response:
+                log_backend_http_scheduler(url, response.status)
+                if response.status == status.HTTP_404_NOT_FOUND:
+                    return None
+                if response.status != status.HTTP_200_OK:
+                    await _slurm_unexpected_response(response)
+                return await response.json()
+
+        results = await asyncio.gather(
+            fetch_jobs(slurmdb_url), fetch_jobs(slurm_url), return_exceptions=True
+        )
+        jobs = {}
+        for result in results:
+            if result is None:
+                continue
+            if isinstance(result, Exception):
+                raise result
+            if result and "jobs" in result:
+                # Note: starting from API version v0.0.39 this filter can be set as query param
+                filtered_jobs = list(
+                    filter(
+                        lambda job: (
+                            allusers or job["user"] == username
+                            if "user" in job
+                            else job["user_name"] == username
+                        ),
+                        result["jobs"],
+                    )
                 )
-            )
-            # Apply Slurm model
-            jobs = [SlurmJob.model_validate(job) for job in jobs]
-            if len(jobs) == 0:
-                return None
-
-        return jobs
+                for job in filtered_jobs:
+                    job_obj = SlurmJob.model_validate(job)
+                    # Normalise limit from minutes to seconds
+                    if job_obj.time.limit is not None:
+                        job_obj.time.limit *= 60
+                    if job_obj.job_id not in jobs or job_obj.status.state == "PENDING":
+                        jobs[job_obj.job_id] = job_obj
+        return list(jobs.values()) if len(jobs) > 0 else None
 
     async def get_job_metadata(
         self, job_id: str, username: str, jwt_token: str
-    ) -> List[SlurmJobMetadata]:
+    ) -> List[SlurmJobMetadata] | None:
         # Until version 4.05.1 slurmdb/job end-point does not provide stdout & stderr information
         raise NotImplementedError("This method is not supported by the Slurm REST API")
 
     async def get_jobs(
-        self, username: str, jwt_token: str, allusers: bool = False, account: str = None
+        self,
+        username: str,
+        jwt_token: str,
+        allusers: bool = False,
+        account: str = None,
+        name: str = None,
+        time_window: JobsTimeWindow = None,
     ) -> List[SlurmJob] | None:
         client = await self.get_aiohttp_client()
         timeout = aiohttp.ClientTimeout(total=self.timeout)
         headers = _slurm_headers(username, jwt_token, self.username_claim)
-        url = f"{self.api_url}/slurmdb/v{self.api_version}/jobs"
+
+        query_params = {}
         if account:
-            url += f"?{urllib.parse.urlencode({'account': account})}"
-        async with client.get(
-            url=url,
-            headers=headers,
-            timeout=timeout,
-        ) as response:
-            log_backend_http_scheduler(url, response.status)
-            if response.status != status.HTTP_200_OK:
-                await _slurm_unexpected_response(response)
-            job_result = await response.json()
+            query_params["account"] = account
 
-            # Note: starting from API version v0.0.39 this filter can be set as query param
-            jobs = list(
-                filter(
-                    lambda job: allusers or job["user"] == username, job_result["jobs"]
+        query_string = (
+            f"?{urllib.parse.urlencode(query_params)}" if query_params else ""
+        )
+
+        # slurmdb holds historical/accounting jobs (equivalent to sacct), so it is the
+        # only endpoint bound by the requested time window; slurm holds only the jobs
+        # currently known to the controller (equivalent to squeue).
+        slurmdb_query_params = {
+            **query_params,
+            "start_time": _time_window_start_time(time_window, self.api_version),
+        }
+        slurmdb_query_string = f"?{urllib.parse.urlencode(slurmdb_query_params)}"
+
+        slurmdb_url = (
+            f"{self.api_url}/slurmdb/v{self.api_version}/jobs{slurmdb_query_string}"
+        )
+        slurm_url = f"{self.api_url}/slurm/v{self.api_version}/jobs{query_string}"
+
+        async def fetch_jobs(url: str) -> list:
+            async with client.get(
+                url=url, headers=headers, timeout=timeout
+            ) as response:
+                log_backend_http_scheduler(url, response.status)
+                if response.status != status.HTTP_200_OK:
+                    await _slurm_unexpected_response(response)
+                return await response.json()
+
+        results = await asyncio.gather(
+            fetch_jobs(slurmdb_url), fetch_jobs(slurm_url), return_exceptions=True
+        )
+        jobs = {}
+        for result in results:
+            if isinstance(result, Exception):
+                raise SlurmError("Error fetching Slurm API data.") from result
+
+            def matches(job):
+                job_user = job.get("user") or job.get("user_name")
+                return (allusers or job_user == username) and (
+                    not name or job.get("name") == name
                 )
-            )
-            # Apply Slurm model
-            jobs = [SlurmJob.model_validate(job) for job in jobs]
-            if len(jobs) == 0:
-                return None
 
-        return jobs
+            if result and "jobs" in result:
+                # Note: starting from API version v0.0.39 the "user_name" filter can be set as query param
+                # Note: starting from API version v0.0.45 the "job_name" filter can be set as query param
+
+                filtered_jobs = list(filter(matches, result["jobs"]))
+
+                for job in filtered_jobs:
+                    job_obj = SlurmJob.model_validate(job)
+                    if job_obj.time.limit is not None:
+                        job_obj.time.limit *= 60
+                    if job_obj.job_id not in jobs or job_obj.status.state == "PENDING":
+                        jobs[job_obj.job_id] = job_obj
+        return list(jobs.values())
 
     async def cancel_job(self, job_id: str, username: str, jwt_token: str) -> bool:
         client = await self.get_aiohttp_client()
@@ -272,12 +355,14 @@ class SlurmRestClient(SlurmBaseClient):
         return res
 
     async def get_partitions(
-        self, username: str, jwt_token: str
+        self, show_hidden: bool, username: str, jwt_token: str
     ) -> List[SlurmPartitions] | None:
         client = await self.get_aiohttp_client()
         timeout = aiohttp.ClientTimeout(total=self.timeout)
         headers = _slurm_headers(username, jwt_token, self.username_claim)
         url = f"{self.api_url}/slurm/v{self.api_version}/partitions"
+        if show_hidden:
+            url += "?flags=all"
         async with client.get(
             url=url,
             headers=headers,
@@ -288,11 +373,48 @@ class SlurmRestClient(SlurmBaseClient):
                 await _slurm_unexpected_response(response)
             partition_result = await response.json()
             # Apply Slurm model
-            res = [
+            part = [
                 SlurmPartitions.model_validate(partition)
                 for partition in partition_result["partitions"]
+                # Note: the following approach only works if the API version is >= v0.0.45
+                # if show_hidden or ("hidden" not in partition["flags"])
+                # For now, filtering happens by omitting the "flags=all" query param and let Slurm filter hidden partitions.
             ]
-        return res
+        return part
+
+    async def get_accounts(
+        self, username: str, jwt_token: str
+    ) -> List[SlurmAccounts] | None:
+        client = await self.get_aiohttp_client()
+        timeout = aiohttp.ClientTimeout(total=self.timeout)
+        headers = _slurm_headers(username, jwt_token, self.username_claim)
+
+        query_string = urllib.parse.urlencode({"user": username})
+        url = f"{self.api_url}/slurmdb/v{self.api_version}/associations?{query_string}"
+        async with client.get(
+            url=url,
+            headers=headers,
+            timeout=timeout,
+        ) as response:
+            log_backend_http_scheduler(url, response.status)
+            if response.status != status.HTTP_200_OK:
+                await _slurm_unexpected_response(response)
+            accounts = []
+            result = await response.json()
+            if "associations" in result:
+                for association in result["associations"]:
+                    accounts.append(
+                        {
+                            "name": association["account"],
+                            "default": (True if association["is_default"] else False),
+                        }
+                    )
+            if accounts:
+                accounts = [
+                    SlurmAccounts.model_validate(account) for account in accounts
+                ]
+
+            return accounts if len(accounts) > 0 else None
 
     async def ping(self, username: str, jwt_token: str) -> List[SlurmPing] | None:
         client = await self.get_aiohttp_client()

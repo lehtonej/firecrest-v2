@@ -4,6 +4,7 @@
 # SPDX-License-Identifier: BSD-3-Clause
 
 import asyncio
+import os
 from fastapi import Request, status, HTTPException
 from aiobotocore.config import AioConfig
 from aiobotocore.session import get_session
@@ -13,7 +14,7 @@ from botocore.handlers import validate_bucket_name
 from firecrest.config import (
     DataTransferType,
     HPCCluster,
-    HealthCheckType,
+    BackendServiceType,
     S3DataTransfer,
     SSHKeysServiceType,
     SchedulerType,
@@ -58,6 +59,7 @@ class APIAuthDependency(AuthDependency):
                 public_certs=settings.auth.authentication.public_certs,
                 username_claim=settings.auth.authentication.username_claim,
                 jwk_algorithm=settings.auth.authentication.jwk_algorithm,
+                min_token_ttl=settings.auth.authentication.min_token_ttl,
             )
 
         # Init sigleton authZ services
@@ -95,7 +97,7 @@ class APIAuthDependency(AuthDependency):
 
 
 class ServiceAvailabilityDependency:
-    def __init__(self, service_type: HealthCheckType, ignore_health: bool = False):
+    def __init__(self, service_type: BackendServiceType, ignore_health: bool = False):
         self.ignore_health = ignore_health
         self.service_type = service_type
 
@@ -117,22 +119,35 @@ class ServiceAvailabilityDependency:
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="All filesystem requests require a path or source_path parameter.",
             )
+
+        if not os.path.isabs(path):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"The provided path ({path}) is not an absolute path.",
+            )
+
+        norm_path = os.path.normpath(path)        
+        valid_path = next(
+            (fs.path for fs in system.file_systems if norm_path == fs.path or norm_path.startswith(fs.path.rstrip("/")+"/")),
+            None
+        )
+        if valid_path is None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"The provided path ({norm_path}) does not match any of the defined filesystem paths for the requested system ({system.name}).",
+            )
+
         service = None
         if system.servicesHealth:
             service = next(
                 filter(
                     lambda service: service.service_type == self.service_type
-                    and path.startswith(service.path),
+                    and (norm_path == service.path or norm_path.startswith(service.path.rstrip("/")+"/")),
                     system.servicesHealth,
                 ),
                 None,
             )
-        if service is None:
-            raise HTTPException(
-                status_code=status.HTTP_428_PRECONDITION_REQUIRED,
-                detail=f"No filesystem health checker serving the request path was found on {system.name}.",
-            )
-        if not service.healthy:
+        if service and not service.healthy:
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail=f"The requested filesystem ({service.path} on {system.name}) is unhealthy.",
@@ -148,12 +163,7 @@ class ServiceAvailabilityDependency:
                 ),
                 None,
             )
-        if service is None:
-            raise HTTPException(
-                status_code=status.HTTP_428_PRECONDITION_REQUIRED,
-                detail=f"No scheduler health checker for the requested system ({system.name}) was found.",
-            )
-        if not service.healthy:
+        if service and not service.healthy:
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail=f"The scheduler service for the requested system ({system.name}) is unhealthy.",
@@ -169,12 +179,7 @@ class ServiceAvailabilityDependency:
                 ),
                 None,
             )
-        if service is None:
-            raise HTTPException(
-                status_code=status.HTTP_428_PRECONDITION_REQUIRED,
-                detail=f"No ssh health checker for the requested system ({system.name}) was found.",
-            )
-        if not service.healthy:
+        if service and not service.healthy:
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail=f"The ssh service for the requested system ({system.name}) is unhealthy.",
@@ -191,11 +196,11 @@ class ServiceAvailabilityDependency:
             )
             # Check health of requested system
             if not self.ignore_health and system.probing.services:
-                if self.service_type == HealthCheckType.filesystem:
+                if self.service_type == BackendServiceType.filesystem:
                     self.__file_system_health(system, request)
-                if self.service_type == HealthCheckType.scheduler:
+                if self.service_type == BackendServiceType.scheduler:
                     self.__scheduler_health(system)
-                if self.service_type == HealthCheckType.ssh:
+                if self.service_type == BackendServiceType.ssh:
                     self.__ssh_health(system)
 
             return system
@@ -233,11 +238,13 @@ class SSHClientDependency:
                 self.key_provider = DeiCSSHCACredentialsProvider(
                     settings.ssh_credentials.url,
                     settings.ssh_credentials.max_connections,
+                    app_version=settings.app_version,
                 )
             case SSHKeysServiceType.SSHService:
                 self.key_provider = SSHKeygenCredentialsProvider(
                     settings.ssh_credentials.url,
                     settings.ssh_credentials.max_connections,
+                    app_version=settings.app_version,
                 )
             case SSHKeysServiceType.SSHStaticKeys:
                 self.key_provider = SSHStaticKeysProvider(settings.ssh_credentials.keys)
@@ -246,7 +253,7 @@ class SSHClientDependency:
 
     async def __call__(self, system_name: str):
         system = ServiceAvailabilityDependency(
-            service_type=HealthCheckType.ssh, ignore_health=self.ignore_health
+            service_type=BackendServiceType.ssh, ignore_health=self.ignore_health
         )(system_name=system_name)
 
         async with SSHClientDependency.lock:
@@ -301,7 +308,7 @@ class SchedulerClientDependency:
         system_name: str,
     ):
         system = ServiceAvailabilityDependency(
-            service_type=HealthCheckType.scheduler, ignore_health=self.ignore_health
+            service_type=BackendServiceType.scheduler, ignore_health=self.ignore_health
         )(system_name=system_name)
 
         match system.scheduler.type:
@@ -318,6 +325,7 @@ class SchedulerClientDependency:
                     system.scheduler.api_url,
                     system.scheduler.timeout,
                     settings.auth.authentication.username_claim,
+                    system.scheduler.connection_mode,
                 )
             case SchedulerType.pbs:
                 return PbsClient(
@@ -371,9 +379,9 @@ class DataTransferDependency:
         scheduler_client = await self._get_scheduler_client(system_name)
         ssh_client = await self._get_ssh_client(system_name)
 
-        system = ServiceAvailabilityDependency(service_type=HealthCheckType.scheduler)(
-            system_name=system_name
-        )
+        system = ServiceAvailabilityDependency(
+            service_type=BackendServiceType.scheduler
+        )(system_name=system_name)
         work_dir = next(
             iter([fs.path for fs in system.file_systems if fs.default_work_dir]),
             None,

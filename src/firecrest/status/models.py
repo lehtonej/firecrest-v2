@@ -4,7 +4,7 @@
 # SPDX-License-Identifier: BSD-3-Clause
 
 from datetime import datetime
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 
 # configs
@@ -13,6 +13,7 @@ from firecrest.config import HPCCluster
 # models
 from lib.models import CamelModel
 from lib.scheduler_clients.models import (
+    AccountsModel,
     NodeModel,
     PartitionModel,
     ReservationModel,
@@ -45,7 +46,13 @@ class PosixIdentified(CamelModel):
     name: str
 
 
+class PosixGroupIdentified(CamelModel):
+    id: str
+    name: str
+    default: bool
+
+
 class UserInfoResponse(CamelModel):
     user: PosixIdentified
-    group: PosixIdentified
-    groups: List[PosixIdentified]
+    groups: List[PosixGroupIdentified]
+    accounts: Optional[List[AccountsModel]] = None

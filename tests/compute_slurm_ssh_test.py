@@ -9,6 +9,7 @@ from tests import mocked_ssh_outputs
 import json
 
 from tests.mock_ssh_client import MockedCommand
+from tests.helpers import helper_test_get_job, mocked_ssh_sacct_output
 
 
 @pytest.fixture(scope="module")
@@ -19,17 +20,85 @@ def mocked_ssh_sbatch_output():
 
 
 @pytest.fixture(scope="module")
-def mocked_ssh_sacct_output():
-    output_file = impresources.files(mocked_ssh_outputs) / "ssh_sacct_command.json"
+def mocked_ssh_sbatch_output_out_of_quota():
+    output_file = (
+        impresources.files(mocked_ssh_outputs) / "ssh_sbatch_command_out_of_quota.json"
+    )
+    with output_file.open("rb") as output:
+        return json.load(output)
+
+
+@pytest.fixture(scope="module")
+def mocked_ssh_squeue_allusers_output():
+    output_file = (
+        impresources.files(mocked_ssh_outputs) / "ssh_squeue_allusers_command.json"
+    )
+    with output_file.open("rb") as output:
+        return json.load(output)
+
+
+@pytest.fixture(scope="module")
+def mocked_ssh_squeue_by_name_output():
+    output_file = (
+        impresources.files(mocked_ssh_outputs) / "ssh_squeue_name_command.json"
+    )
+    with output_file.open("rb") as output:
+        return json.load(output)
+
+
+@pytest.fixture(scope="module")
+def mocked_ssh_squeue_by_name_dont_exist_output():
+    output_file = (
+        impresources.files(mocked_ssh_outputs)
+        / "ssh_squeue_name_dont_exist_command.json"
+    )
+    with output_file.open("rb") as output:
+        return json.load(output)
+
+
+@pytest.fixture(scope="module")
+def mocked_ssh_squeue_by_name_not_ok_output():
+    output_file = (
+        impresources.files(mocked_ssh_outputs) / "ssh_squeue_name_not_ok_command.json"
+    )
     with output_file.open("rb") as output:
         return json.load(output)
 
 
 @pytest.fixture(scope="module")
 def mocked_ssh_sacct_allusers_output():
-    output_file = impresources.files(mocked_ssh_outputs) / "ssh_sacct_allusers_command.json"
+    output_file = (
+        impresources.files(mocked_ssh_outputs) / "ssh_sacct_allusers_command.json"
+    )
     with output_file.open("rb") as output:
         return json.load(output)
+
+
+@pytest.fixture(scope="module")
+def mocked_ssh_sacct_by_name_output():
+    output_file = impresources.files(mocked_ssh_outputs) / "ssh_sacct_name_command.json"
+    with output_file.open("rb") as output:
+        return json.load(output)
+
+
+@pytest.fixture(scope="module")
+def mocked_ssh_sacct_by_name_dont_exist_output():
+    output_file = (
+        impresources.files(mocked_ssh_outputs)
+        / "ssh_sacct_name_dont_exist_command.json"
+    )
+    with output_file.open("rb") as output:
+        return json.load(output)
+
+
+@pytest.fixture(scope="module")
+def mocked_ssh_sacct_by_name_not_ok_output():
+    output_file = (
+        impresources.files(mocked_ssh_outputs) / "ssh_sacct_name_not_ok_command.json"
+    )
+    with output_file.open("rb") as output:
+        return json.load(output)
+
 
 @pytest.fixture(scope="module")
 def mocked_ssh_sacct_script_output():
@@ -80,6 +149,8 @@ async def test_submit_job(
         "job": {
             "name": "test1",
             "working_directory": "/home/test1",
+            "partition": "partition_a",
+            "reservation": "myreservation",
             "env": {"PATH": "/bin:/usr/bin/:/usr/local/bin/"},
             "script": "#!/bin/bash\nfactor $(od -N 10 -t uL -An /dev/urandom | tr -d ' ')",
         }
@@ -96,26 +167,61 @@ async def test_submit_job(
         assert response.json() is not None
 
 
-async def test_get_job(
-    client, ssh_client, mocked_ssh_sacct_output, slurm_cluster_with_ssh_config
+async def test_submit_job_out_of_quota(
+    client,
+    ssh_client,
+    mocked_ssh_sbatch_output_out_of_quota,
+    slurm_cluster_with_ssh_config,
 ):
 
-    async with ssh_client.mocked_output([MockedCommand(**mocked_ssh_sacct_output)]):
-        response = client.get(
-            "/compute/{cluster_name}/jobs/{job_id}".format(
-                cluster_name=slurm_cluster_with_ssh_config.name, job_id=1
-            )
-        )
-        assert response.status_code == 200
-        assert response.json() is not None
+    request_body = {
+        "job": {
+            "name": "test1",
+            "working_directory": "/home/test1",
+            "partition": "partition_a",
+            "reservation": "myreservation",
+            "env": {"PATH": "/bin:/usr/bin/:/usr/local/bin/"},
+            "script": "#!/bin/bash\nfactor $(od -N 10 -t uL -An /dev/urandom | tr -d ' ')",
+        }
+    }
 
-        assert response.json()["jobs"][0]["status"]["exitCode"] == 0        
+    async with ssh_client.mocked_output(
+        [MockedCommand(**mocked_ssh_sbatch_output_out_of_quota)]
+    ):
+        response = client.post(
+            "/compute/{cluster_name}/jobs".format(
+                cluster_name=slurm_cluster_with_ssh_config.name
+            ),
+            json=request_body,
+        )
+        assert response.status_code == 403
+        assert "policy" in response.json()["message"]
+
+
+async def test_get_job(
+    client,
+    ssh_client,
+    slurm_cluster_with_ssh_config,
+):
+
+    await helper_test_get_job(
+        client, ssh_client, cluster_name=slurm_cluster_with_ssh_config.name
+    )
 
 
 async def test_get_jobs_allusers(
-    client, ssh_client, mocked_ssh_sacct_allusers_output, slurm_cluster_with_ssh_config
+    client,
+    ssh_client,
+    mocked_ssh_sacct_allusers_output,
+    mocked_ssh_squeue_allusers_output,
+    slurm_cluster_with_ssh_config,
 ):
-    async with ssh_client.mocked_output([MockedCommand(**mocked_ssh_sacct_allusers_output)]):
+    async with ssh_client.mocked_output(
+        [
+            MockedCommand(**mocked_ssh_sacct_allusers_output),
+            MockedCommand(**mocked_ssh_squeue_allusers_output),
+        ]
+    ):
         response = client.get(
             "/compute/{cluster_name}/jobs?allusers=true".format(
                 cluster_name=slurm_cluster_with_ssh_config.name
@@ -128,10 +234,123 @@ async def test_get_jobs_allusers(
         assert response.json()["jobs"][1]["user"] == "firesrv"
 
 
+async def test_get_jobs_by_name(
+    client,
+    ssh_client,
+    mocked_ssh_sacct_by_name_output,
+    mocked_ssh_squeue_by_name_output,
+    slurm_cluster_with_ssh_config,
+):
+    async with ssh_client.mocked_output(
+        [
+            MockedCommand(**mocked_ssh_sacct_by_name_output),
+            MockedCommand(**mocked_ssh_squeue_by_name_output),
+        ]
+    ):
+        response = client.get(
+            "/compute/{cluster_name}/jobs?name=NameExists".format(
+                cluster_name=slurm_cluster_with_ssh_config.name
+            )
+        )
+
+        assert response.status_code == 200
+        assert response.json() is not None
+
+        assert response.json()["jobs"][0]["name"] == "NameExists"
+        assert response.json()["jobs"][0]["user"] == "test-user"
+
+
+async def test_get_jobs_by_name_dont_exist(
+    client,
+    ssh_client,
+    mocked_ssh_sacct_by_name_dont_exist_output,
+    mocked_ssh_squeue_by_name_dont_exist_output,
+    slurm_cluster_with_ssh_config,
+):
+    async with ssh_client.mocked_output(
+        [
+            MockedCommand(**mocked_ssh_sacct_by_name_dont_exist_output),
+            MockedCommand(**mocked_ssh_squeue_by_name_dont_exist_output),
+        ]
+    ):
+        response = client.get(
+            "/compute/{cluster_name}/jobs?name=DontExist".format(
+                cluster_name=slurm_cluster_with_ssh_config.name
+            )
+        )
+        assert response.status_code == 200
+        assert response.json() is not None
+
+        assert len(response.json()["jobs"]) == 0
+
+
+async def test_get_jobs_by_name_notok(
+    client,
+    ssh_client,
+    mocked_ssh_sacct_by_name_not_ok_output,
+    mocked_ssh_squeue_by_name_not_ok_output,
+    slurm_cluster_with_ssh_config,
+):
+    async with ssh_client.mocked_output(
+        [
+            MockedCommand(**mocked_ssh_sacct_by_name_not_ok_output),
+            MockedCommand(**mocked_ssh_squeue_by_name_not_ok_output),
+        ]
+    ):
+        response = client.get(
+            "/compute/{cluster_name}/jobs?name='x' ; touch /tmp/test ; ''".format(
+                cluster_name=slurm_cluster_with_ssh_config.name
+            )
+        )
+        assert response.status_code == 200
+        assert response.json() is not None
+
+
+async def test_get_jobs_with_time_window(
+    client,
+    ssh_client,
+    mocked_ssh_sacct_allusers_output,
+    mocked_ssh_squeue_allusers_output,
+    slurm_cluster_with_ssh_config,
+):
+    sacct_output_last_hour = {
+        **mocked_ssh_sacct_allusers_output,
+        "command": mocked_ssh_sacct_allusers_output["command"].replace(
+            "--starttime=now-24hours", "--starttime=now-1hour"
+        ),
+    }
+    async with ssh_client.mocked_output(
+        [
+            MockedCommand(**sacct_output_last_hour),
+            MockedCommand(**mocked_ssh_squeue_allusers_output),
+        ]
+    ):
+        response = client.get(
+            "/compute/{cluster_name}/jobs?allusers=true&time_window=1h".format(
+                cluster_name=slurm_cluster_with_ssh_config.name
+            )
+        )
+        assert response.status_code == 200
+        assert response.json() is not None
+        assert response.json()["jobs"][0]["user"] == "fireuser"
+        assert response.json()["jobs"][1]["user"] == "firesrv"
+
+
+async def test_get_jobs_with_invalid_time_window(
+    client,
+    slurm_cluster_with_ssh_config,
+):
+    response = client.get(
+        "/compute/{cluster_name}/jobs?time_window=30days".format(
+            cluster_name=slurm_cluster_with_ssh_config.name
+        )
+    )
+    assert response.status_code == 400
+
+
 async def test_get_job_metadata(
     client,
     ssh_client,
-    mocked_ssh_sacct_output,
     mocked_ssh_sacct_script_output,
     mocked_ssh_scontrol_script_output,
     mocked_ssh_scontrol_job_output,
@@ -140,7 +359,7 @@ async def test_get_job_metadata(
 
     async with ssh_client.mocked_output(
         [
-            MockedCommand(**mocked_ssh_sacct_output),
+            MockedCommand(**mocked_ssh_sacct_output()),
             MockedCommand(**mocked_ssh_sacct_script_output),
             MockedCommand(**mocked_ssh_scontrol_script_output),
             MockedCommand(**mocked_ssh_scontrol_job_output),
@@ -153,6 +372,75 @@ async def test_get_job_metadata(
         )
         assert response.status_code == 200
         assert response.json() is not None
+
+
+async def test_get_job_metadata_without_stored_batch_script(
+    client, ssh_client, slurm_cluster_with_ssh_config
+):
+    # The job is no longer known to the slurm controller but is still in the
+    # accounting database, which was not configured to store batch scripts
+    # (AccountingStoreFlags=job_script). Both script commands come back empty.
+    async with ssh_client.mocked_output(
+        [
+            MockedCommand(
+                command="scontrol show",
+                stdout="",
+                stderr="slurm_load_jobs error: Invalid job id specified",
+                exit_code=1,
+            ),
+            MockedCommand(
+                command="scontrol write batch_script",
+                stdout="",
+                stderr="scontrol: error: Invalid job id specified",
+                exit_code=1,
+            ),
+            MockedCommand(command="--batch-script", stdout="", stderr=""),
+            MockedCommand(
+                command="--format=",
+                stdout="4498195|myjob||slurm-%j.out|slurm-%j.err|/scratch/test-user",
+                stderr="",
+            ),
+        ]
+    ):
+        response = client.get(
+            "/compute/{cluster_name}/jobs/{job_id}/metadata".format(
+                cluster_name=slurm_cluster_with_ssh_config.name, job_id=4498195
+            )
+        )
+        assert response.status_code == 200
+        job = response.json()["jobs"][0]
+        assert job["jobId"] == "4498195"
+        assert job["script"] is None
+        assert job["standardOutput"] == "/scratch/test-user/slurm-4498195.out"
+
+
+async def test_get_job_metadata_of_non_batch_job(
+    client, ssh_client, mocked_ssh_scontrol_job_output, slurm_cluster_with_ssh_config
+):
+    # scontrol knows the job but cannot write a batch script for it, as the job
+    # was not submitted with sbatch (BatchFlag=0).
+    async with ssh_client.mocked_output(
+        [
+            MockedCommand(
+                command="scontrol write batch_script",
+                stdout="",
+                stderr="scontrol: error: Job script not found",
+                exit_code=1,
+            ),
+            MockedCommand(**mocked_ssh_scontrol_job_output),
+            MockedCommand(command="--batch-script", stdout="", stderr=""),
+            MockedCommand(command="--format=", stdout="", stderr=""),
+        ]
+    ):
+        response = client.get(
+            "/compute/{cluster_name}/jobs/{job_id}/metadata".format(
+                cluster_name=slurm_cluster_with_ssh_config.name, job_id=1
+            )
+        )
+        assert response.status_code == 200
+        job = response.json()["jobs"][0]
+        assert job["jobId"] == "1"
+        assert job["script"] is None
 
 
 async def test_delete_job(

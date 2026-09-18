@@ -5,11 +5,126 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [2.X.Y] - OPEN
+## [2.6.1]
 
 ### Added
 
 - Configurable bucket name prefix for S3 data transfer operation
+
+### Changed
+
+- Minimum JWT token ttl now defaults to 5 seconds (was 30). A token is only
+  rejected as too close to expiry when its remaining lifetime is under this
+  threshold, so lowering it makes the check more permissive: tokens with
+  as little as 5 seconds left are now accepted, where 30 seconds was
+  previously required.
+
+## [2.6.0]
+
+### Added
+
+- Added `name` query parameter in `GET /compute/jobs` request
+- Added `time_window` query parameter to `GET /compute/{system_name}/jobs` to control how far back historical (completed, failed, cancelled...) jobs are looked up. Accepted values: `1h`, `8h`, `24h`, `3d`, `7d`.
+
+### Changed
+
+- ***⚠️ API Breaking*** Refactored UserInfo response, group and groups objects have been merged.
+- ***⚠️ API Breaking*** `GET /compute/{system_name}/jobs` now defaults to a `24h` historical lookback window. Previously the lookback was a fixed 7 days on SSH/CLI-based clusters, and unbounded on REST-based clusters (no time filter was sent to `slurmdb`). Pass `time_window=7d` for the widest supported window.
+- ***⚠️ API Breaking*** Reworked the mapping from internal exceptions to HTTP response status codes. Changed status codes:
+    - A command that exceeds its execution timeout (`TimeoutLimitExceeded`) now returns **504 Gateway Timeout** instead of **408 Request Timeout**.
+    - Generic SSH client/service failures (`SSHClientError` / `SSHServiceError` that are not a more specific connection error) now return **502 Bad Gateway** instead of **500 Internal Server Error**.
+
+### Fixed
+
+- Job metadata no longer fails with `object of type 'NoneType' has no len()` when the batch script is unavailable, e.g. for jobs purged from the Slurm controller or not submitted with `sbatch`. The metadata is now returned with a null `script`.
+- Demo Use Cases: updated Flask to 3.1.3 and pip to 26.1.2 to address vulnerabilities ([CVE-2026-3219](https://nvd.nist.gov/vuln/detail/CVE-2026-3219), [CVE-2026-6357](https://nvd.nist.gov/vuln/detail/CVE-2026-6357), [CVE-2026-8643](https://nvd.nist.gov/vuln/detail/CVE-2026-8643), and [CVE-2026-27205](https://nvd.nist.gov/vuln/detail/CVE-2026-27205))
+
+## [2.5.6]
+
+### Added
+
+### Changed
+
+- SSH connection pool locking is now per-user instead of global, reducing unnecessary SSH connection wait times. The max_clients connection pool setting is no longer a hard limit; under a high number of concurrent requests, the limit may be temporarily exceeded.
+
+- Consolidated logging messages and HTTP tracing headers. Forwarded requests now include X-Request-ID and X-Correlation-ID (instead of X-Trace-Id). 
+
+### Fixed
+
+- Allow command execution when the health check is disabled
+- Scheduler in connection mode `ssh` was skipped when RESTAPI `url` option was set.
+
+## [2.5.5]
+
+### Added
+
+- Trace logs now include both request and response trace.
+
+### Fixed
+
+- Fixes truncation of `workingDirectory` in job responses for running/pending jobs caused by `squeue`'s default 20-character column width.
+- Fixes error handling of downstream services.
+- Fixes log tracing
+
+
+
+## [2.5.4]
+
+### Added
+
+- Added partition and reservation override parameters to job submission endpoint.
+- Added parameter to shows hidden partitions.
+- Added reservation status in API response.
+
+### Changed
+
+### Fixed
+
+- Fixes reservations date parsing.
+
+## [2.5.3]
+
+### Added
+
+- Configuration setting `token_endpoint_auth_method` to authenticate the health-check client following [OIDC client authentication standards](https://openid.net/specs/openid-connect-core-1_0.html#ClientAuthentication). Defaults to `client_secret_basic` to match pre-2.5.3 behavior.
+
+### Changed
+
+### Fixed
+
+- Aligned livenessProbe timeout with the check_liveness.py script inner timeout value.
+
+## [2.5.2]
+
+### Added
+
+
+### Changed
+
+- Unified names for subsystems probing and health status: probing key `filesystems` was renamed to `filesystem` (the old label is deprecated but still valid).
+
+
+### Fixed
+
+- Proper handling of non unicode chars in ssh commands output.
+
+
+## [2.5.1]
+
+### Added
+
+- Configurable minimum remaining TTL check for incoming OIDC access tokens
+- UserInfo endpoint now also includes user's account information (only on Slurm)
+- Adds resources requests and limits to helm chart
+
+### Changed
+
+- Nodes status has been normalized across schedulers.
+
+### Fixed
+
+- Slurm job information is now fetched from both the Slurm DB and the Slurm queue allowing to include ineligible jobs' data.
+- Fixed issue with health check liveness at deployment time.
 
 ## [2.5.0]
 
@@ -23,14 +138,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - ***⚠️ API Breaking*** Fix transfer directives serialization, now properties names are properly camelcased (see issue: #162).
+- ***⚠️ API Breaking*** Handle job arrays in PBS. Job IDs will be strings, and not integers anymore in the API responses.
 - Returns an error if the `transfer_method` chosen for large data transfer is not available.
-- Documentation about `streamer` and `wormhole` data trasnfer methods
-- `buffer_limit` for `/filesystem/<system>/ops/*` operation is now adapted to the value of `settings.data_operation.max_ops_file_size` (it was set to the value by default of 5MB)
-- Updated Demo launcher configuration
+- Documentation about `streamer` and `wormhole` data transfer methods.
+- `buffer_limit` for `/filesystem/<system>/ops/*` operation is now adapted to the value of `settings.data_operation.max_ops_file_size` (it was set to the value by default of 5MB).
+- Updated Demo launcher configuration.
 - Fix error for PBS jobs when no nodes are assigned to it.
-- Handle job arrays in PBS. Job IDs will be strings, and not integers anymore in the API responses.
 - Remove hardcoded jfrog link from the wormhole download endpoint.
-- Customizable Response's headers tracing log
+- Customizable Response's headers tracing log.
 
 ## [2.4.2]
 

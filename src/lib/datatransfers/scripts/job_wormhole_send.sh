@@ -14,6 +14,6 @@ python3.11 -m venv .venv
 source .venv/bin/activate
 pip install magic-wormhole --index-url {{pypi_index_url}}
 
-echo $(date -u) "Waiting till file to tranfer is available..."
+echo $(date -u) "Waiting until file to transfer is available..."
 
 wormhole send {{source}} --code {{wormhole_code}}

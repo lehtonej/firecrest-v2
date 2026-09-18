@@ -6,11 +6,14 @@
 import asyncio
 from typing import List
 from packaging.version import Version
+from lib.exceptions import SlurmError
 
 # models
 from lib.scheduler_clients.slurm.cli_commands.sacct_batch_script_command import (
     SacctBatchScriptCommand,
 )
+
+from lib.scheduler_clients.slurm.cli_commands.squeue_command import SqueueCommand
 from lib.scheduler_clients.slurm.cli_commands.sacct_job_info_command import SacctCommand
 from lib.scheduler_clients.slurm.cli_commands.sacct_job_metadata_command import (
     SacctJobMetadataCommand,
@@ -32,7 +35,9 @@ from lib.scheduler_clients.slurm.cli_commands.scontrol_reservations_command impo
 )
 from lib.scheduler_clients.slurm.cli_commands.sinfo_command import SinfoCommand
 from lib.scheduler_clients.slurm.cli_commands.srun_command import SrunCommand
+from lib.scheduler_clients.models import JobsTimeWindow
 from lib.scheduler_clients.slurm.models import (
+    SlurmAccounts,
     SlurmJob,
     SlurmJobDescription,
     SlurmJobMetadata,
@@ -40,6 +45,12 @@ from lib.scheduler_clients.slurm.models import (
     SlurmPing,
     SlurmReservations,
     SlurmNode,
+)
+from lib.scheduler_clients.slurm.cli_commands.sacctmgr_accounts import (
+    SacctmgrAccountsCommand,
+)
+from lib.scheduler_clients.slurm.cli_commands.sacctmgr_default_account import (
+    SacctmgrDefaultAccountCommand,
 )
 
 # clients
@@ -66,7 +77,7 @@ class SlurmCliClient(SlurmBaseClient):
         job_description: SlurmJobDescription,
         username: str,
         jwt_token: str,
-    ) -> int | None:
+    ) -> str | None:
         sbatch = SbatchCommand(job_description=job_description)
         return await self.__executed_ssh_cmd(
             username, jwt_token, sbatch, job_description.script
@@ -78,7 +89,7 @@ class SlurmCliClient(SlurmBaseClient):
         job_id: str,
         username: str,
         jwt_token: str,
-    ) -> int | None:
+    ) -> None:
         srun = SrunCommand(command=command, job_id=job_id, overlap=True)
         return await self.__executed_ssh_cmd(username, jwt_token, srun)
 
@@ -90,15 +101,31 @@ class SlurmCliClient(SlurmBaseClient):
         allusers: bool = True,
     ) -> List[SlurmJob] | None:
         sacct = SacctCommand(username, [job_id], allusers)
-        jobs = await self.__executed_ssh_cmd(username, jwt_token, sacct)
-        if jobs:
-            # Apply Slurm model
-            jobs = [SlurmJob.model_validate(job) for job in jobs]
-        return jobs
+        squeue = SqueueCommand(username, [job_id], allusers)
+
+        commands = [
+            # sacct has precedence over squeue, as it contains more complete job info, including finished jobs
+            self.__executed_ssh_cmd(username, jwt_token, sacct),
+            self.__executed_ssh_cmd(username, jwt_token, squeue),
+        ]
+        results = await asyncio.gather(*commands, return_exceptions=True)
+        jobs = {}
+        for result in results:
+            if result is None:
+                continue
+            if isinstance(result, Exception):
+                raise SlurmError("Error executing Slurm command.") from result
+            if result and isinstance(result, list):
+                for job in result:
+                    job_obj = SlurmJob.model_validate(job)
+                    if job_obj.job_id not in jobs or job_obj.status.state == "PENDING":
+                        jobs[job_obj.job_id] = job_obj
+
+        return list(jobs.values()) if len(jobs) > 0 else None
 
     async def get_job_metadata(
         self, job_id: str, username: str, jwt_token: str
-    ) -> List[SlurmJobMetadata]:
+    ) -> List[SlurmJobMetadata] | None:
 
         # Note:
         # sacct --format="StdOut,StdIn,StdErr" and batch-script require custom config
@@ -129,34 +156,63 @@ class SlurmCliClient(SlurmBaseClient):
         if not isinstance(results[cmd_result_i], list) and len(results) == 4:
             cmd_result_i = 2
 
+        job_info = results[cmd_result_i]
+        script_info = results[cmd_result_i + 1]
+
         # check if job was found
-        if results[cmd_result_i] is None:
+        if job_info is None:
             return None
-        if isinstance(results[cmd_result_i], Exception):
-            return results[cmd_result_i]
+        if isinstance(job_info, Exception):
+            raise SlurmError("Error executing Slurm command.") from job_info
+
+        # script info is optional: it is only stored in the accounting database when
+        # slurm.conf sets AccountingStoreFlags=job_script
+        if not isinstance(script_info, list):
+            script_info = []
+
+        scripts_by_id = {
+            s["jobId"]: s
+            for s in script_info
+            if isinstance(s, dict) and s.get("jobId") is not None
+        }
 
         jobs = []
-        for i in range(len(results[cmd_result_i])):
-            # if script info is not available, continue
-            if i >= len(results[cmd_result_i + 1]):
-                continue
-            jobs.append(
-                SlurmJobMetadata(
-                    **{**results[cmd_result_i][i], **results[cmd_result_i + 1][i]}
-                )
-            )
+        for job in job_info:
+            key = job.get("jobId") or job.get("JobId")
+            script = scripts_by_id.get(key, {})
+            jobs.append(SlurmJobMetadata(**{**job, **script}))
 
         return jobs
 
     async def get_jobs(
-        self, username: str, jwt_token: str, allusers: bool = False, account: str = None
+        self,
+        username: str,
+        jwt_token: str,
+        allusers: bool = False,
+        account: str = None,
+        name: str = None,
+        time_window: JobsTimeWindow = None,
     ) -> List[SlurmJob] | None:
-        sacct = SacctCommand(username, None, allusers, account)
-        jobs = await self.__executed_ssh_cmd(username, jwt_token, sacct)
-        if jobs:
-            # Apply Slurm model
-            jobs = [SlurmJob.model_validate(job) for job in jobs]
-        return jobs
+        sacct = SacctCommand(username, None, allusers, account, name, time_window)
+        squeue = SqueueCommand(username, None, allusers, account, name)
+
+        commands = [
+            # sacct has precedence over squeue, as it contains more complete job info, including finished jobs
+            self.__executed_ssh_cmd(username, jwt_token, sacct),
+            self.__executed_ssh_cmd(username, jwt_token, squeue),
+        ]
+        results = await asyncio.gather(*commands, return_exceptions=True)
+        jobs = {}
+        for result in results:
+            if isinstance(result, Exception):
+                raise SlurmError("Error executing Slurm command.") from result
+            if result and isinstance(result, list):
+                for job in result:
+                    job_obj = SlurmJob.model_validate(job)
+                    if job_obj.job_id not in jobs or job_obj.status.state == "PENDING":
+                        jobs[job_obj.job_id] = job_obj
+
+        return list(jobs.values())
 
     async def cancel_job(self, job_id: str, username: str, jwt_token: str) -> bool:
         scancel = ScancelCommand(username, job_id)
@@ -179,15 +235,56 @@ class SlurmCliClient(SlurmBaseClient):
         return result
 
     async def get_partitions(
-        self, username: str, jwt_token: str
+        self, show_hidden: bool, username: str, jwt_token: str
     ) -> List[SlurmPartitions] | None:
-        scontrolpartition = ScontrolPartitionCommand()
+        scontrolpartition = ScontrolPartitionCommand(show_hidden)
         result = await self.__executed_ssh_cmd(username, jwt_token, scontrolpartition)
         if result:
             result = [
                 SlurmPartitions.model_validate(reservation) for reservation in result
             ]
         return result
+
+    async def get_accounts(
+        self,
+        username: str,
+        jwt_token: str,
+    ) -> List[SlurmAccounts] | None:
+        sacctmgr = SacctmgrAccountsCommand(username)
+        sacctmgr_default = SacctmgrDefaultAccountCommand(username)
+
+        commands = [
+            self.__executed_ssh_cmd(username, jwt_token, sacctmgr),
+            self.__executed_ssh_cmd(username, jwt_token, sacctmgr_default),
+        ]
+        accounts_result, default_account_result = await asyncio.gather(
+            *commands, return_exceptions=True
+        )
+
+        if isinstance(accounts_result, Exception):
+            raise SlurmError("Error executing Slurm command.") from accounts_result
+
+        default_account = None
+        if (
+            default_account_result is not None
+            and not isinstance(default_account_result, Exception)
+            and isinstance(default_account_result, str)
+        ):
+            default_account = default_account_result
+
+        accounts = []
+        if accounts_result and isinstance(accounts_result, list):
+            for account in accounts_result:
+                accounts.append(
+                    {
+                        "name": account,
+                        "default": account == default_account,
+                    }
+                )
+        if accounts:
+            accounts = [SlurmAccounts.model_validate(account) for account in accounts]
+
+        return accounts if len(accounts) > 0 else None
 
     async def ping(self, username: str, jwt_token: str) -> List[SlurmPing] | None:
         scontrolping = ScontrolPingCommand()

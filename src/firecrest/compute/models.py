@@ -25,6 +25,8 @@ class PostJobSubmitRequest(JobSubmitRequestModel):
                     "job": {
                         "name": "Example with inline script",
                         "account": "myproject",
+                        "reservation": "myreservation",
+                        "partition": "partition_a",
                         "workingDirectory": "{{home_path}}",
                         "standardInput": "/dev/null",
                         "standardOutput": "count_to_100.out",
@@ -40,6 +42,8 @@ class PostJobSubmitRequest(JobSubmitRequestModel):
                     "job": {
                         "name": "Example with script path",
                         "account": "myproject",
+                        "reservation": "myreservation",
+                        "partition": "partition_a",
                         "workingDirectory": "{{home_path}}",
                         "standardInput": "/dev/null",
                         "standardOutput": "count_to_100.out",
@@ -65,7 +69,7 @@ class GetJobMetadataResponse(CamelModel):
 
 
 class PostJobSubmissionResponse(CamelModel):
-    job_id: Optional[int] = Field(None, nullable=True)
+    job_id: Optional[str] = Field(None, nullable=True)
 
 
 class PostJobAttachRequest(CamelModel):

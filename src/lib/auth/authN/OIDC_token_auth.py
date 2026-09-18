@@ -3,6 +3,7 @@
 # Please, refer to the LICENSE file in the root directory.
 # SPDX-License-Identifier: BSD-3-Clause
 
+from time import time
 from typing import List
 from jose import jwt, ExpiredSignatureError, JWTError, jwk
 from fastapi import HTTPException, status
@@ -10,20 +11,27 @@ import requests
 from requests.adapters import HTTPAdapter, Retry
 from requests_file import FileAdapter
 
-
 # models
 from lib.auth.authN.authentication_service import AuthenticationService
 from lib.models import ApiAuthModel
+from lib.models.config_model import DEFAULT_MIN_TOKEN_TTL
 
 
 class OIDCTokenAuth(AuthenticationService):
 
     public_keys = {}
 
-    def __init__(self, public_certs: List[str] = None, username_claim: str = None, jwk_algorithm: str = None):
+    def __init__(
+        self,
+        public_certs: List[str] = None,
+        username_claim: str = None,
+        jwk_algorithm: str = None,
+        min_token_ttl: int = DEFAULT_MIN_TOKEN_TTL,
+    ):
 
         self.username_claim = username_claim
         self.jwk_algorithm = jwk_algorithm
+        self.min_token_ttl = min_token_ttl
 
         keys = []
         s = requests.Session()
@@ -43,10 +51,16 @@ class OIDCTokenAuth(AuthenticationService):
             identifier = key.get("kid", None) or key.get("x5t", None)
             algorithm = key.get("alg", None)
             algo_map = {
-                "RSA":"RS256",
-                "oct":"HS256",
-                "EC": {"None":"ES256", "P-256":"ES256", "P-384":"ES384", "P-521":"ES512", "secp256k1":"ES256K"},
-                "OKP":{"Ed25519":"EdDSA"}
+                "RSA": "RS256",
+                "oct": "HS256",
+                "EC": {
+                    "None": "ES256",
+                    "P-256": "ES256",
+                    "P-384": "ES384",
+                    "P-521": "ES512",
+                    "secp256k1": "ES256K",
+                },
+                "OKP": {"Ed25519": "EdDSA"},
             }
 
             if not algorithm:
@@ -77,6 +91,15 @@ class OIDCTokenAuth(AuthenticationService):
 
         options = {"verify_signature": True, "verify_aud": False, "verify_exp": True}
         decoded_token = jwt.decode(token=access_token, key=public_key, options=options)
+
+        exp = decoded_token.get("exp")
+        if exp is not None and (exp - time()) < self.min_token_ttl:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail=f"Access token expires too soon (less than {self.min_token_ttl}s remaining).",
+                headers={"auth-token": access_token},
+            )
+
         return ApiAuthModel.build_from_oidc_decoded_token(
             decoded_token=decoded_token, username_claim=self.username_claim
         )

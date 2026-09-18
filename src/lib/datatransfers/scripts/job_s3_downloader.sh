@@ -14,7 +14,7 @@ if [ -d "{{ target_path }}" ]; then
     exit 3
 fi
 
-echo $(date -u) "Waiting till file to tranfer is available..."
+echo $(date -u) "Waiting until file to transfer is available..."
 for i in `seq 1440`
 do
     status=$(curl --silent --head -o /dev/null --silent -Iw '%{http_code}' "{{ download_head_url | safe }}")

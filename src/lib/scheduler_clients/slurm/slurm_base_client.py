@@ -6,6 +6,7 @@
 from abc import abstractmethod
 from typing import List
 from lib.scheduler_clients.scheduler_base_client import SchedulerBaseClient
+from lib.scheduler_clients.models import JobsTimeWindow
 from lib.scheduler_clients.slurm.models import (
     SlurmJob,
     SlurmJobDescription,
@@ -14,6 +15,7 @@ from lib.scheduler_clients.slurm.models import (
     SlurmPing,
     SlurmReservations,
     SlurmNode,
+    SlurmAccounts,
 )
 
 
@@ -25,7 +27,7 @@ class SlurmBaseClient(SchedulerBaseClient):
         job_description: SlurmJobDescription,
         username: str,
         jwt_token: str,
-    ) -> int | None:
+    ) -> str | None:
         pass
 
     @abstractmethod
@@ -35,7 +37,7 @@ class SlurmBaseClient(SchedulerBaseClient):
         job_id: str,
         username: str,
         jwt_token: str,
-    ) -> int | None:
+    ) -> str | None:
         pass
 
     @abstractmethod
@@ -58,7 +60,13 @@ class SlurmBaseClient(SchedulerBaseClient):
 
     @abstractmethod
     async def get_jobs(
-        self, username: str, jwt_token: str, allusers: bool = False, account: str = None
+        self,
+        username: str,
+        jwt_token: str,
+        allusers: bool = False,
+        account: str = None,
+        name: str = None,
+        time_window: JobsTimeWindow = None,
     ) -> List[SlurmJob] | None:
         pass
 
@@ -78,8 +86,14 @@ class SlurmBaseClient(SchedulerBaseClient):
 
     @abstractmethod
     async def get_partitions(
-        self, username: str, jwt_token: str
+        self, show_hidden: bool, username: str, jwt_token: str
     ) -> List[SlurmPartitions] | None:
+        pass
+
+    @abstractmethod
+    async def get_accounts(
+        self, username: str, jwt_token: str
+    ) -> List[SlurmAccounts] | None:
         pass
 
     @abstractmethod

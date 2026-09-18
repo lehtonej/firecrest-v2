@@ -3,16 +3,19 @@
 # Please, refer to the LICENSE file in the root directory.
 # SPDX-License-Identifier: BSD-3-Clause
 
+from datetime import datetime, timezone
 from typing import List, Optional
 
 from pydantic import (
     AliasChoices,
     Field,
     field_validator,
+    model_validator,
 )
 
 # models
 from lib.scheduler_clients.models import (
+    AccountsModel,
     JobDescriptionModel,
     JobMetadataModel,
     JobModel,
@@ -20,10 +23,51 @@ from lib.scheduler_clients.models import (
     JobTask,
     JobTime,
     NodeModel,
+    NodeState,
     PartitionModel,
     ReservationModel,
     SchedPing,
 )
+
+_SLURM_STATE_MAP: dict[str, NodeState] = {
+    "idle": NodeState.IDLE,
+    "allocated": NodeState.ALLOCATED,
+    "alloc": NodeState.ALLOCATED,
+    "mixed": NodeState.MIXED,
+    "mix": NodeState.MIXED,
+    "down": NodeState.DOWN,
+    "fail": NodeState.DOWN,
+    "failing": NodeState.DOWN,
+    "failg": NodeState.DOWN,
+    "drain": NodeState.DRAIN,
+    "drained": NodeState.DRAIN,
+    "draining": NodeState.DRAIN,
+    "drng": NodeState.DRAIN,
+    "completing": NodeState.COMPLETING,
+    "comp": NodeState.COMPLETING,
+    "maint": NodeState.OFFLINE,
+    "reserved": NodeState.RESERVED,
+    "resv": NodeState.RESERVED,
+    "power_down": NodeState.POWERING_DOWN,
+    "pow_dn": NodeState.POWERING_DOWN,
+    "power_up": NodeState.POWERING_UP,
+    "pow_up": NodeState.POWERING_UP,
+    "future": NodeState.UNKNOWN,
+    "futr": NodeState.UNKNOWN,
+    "planned": NodeState.UNKNOWN,
+    "plnd": NodeState.UNKNOWN,
+    "blocked": NodeState.UNKNOWN,
+    "unknown": NodeState.UNKNOWN,
+    "unk": NodeState.UNKNOWN,
+    "perfctrs": NodeState.UNKNOWN,
+    "npc": NodeState.UNKNOWN,
+}
+
+
+def _map_slurm_state(raw: str) -> NodeState:
+    # Strip sinfo suffix flags (*, +, ~, #, %, $, @) and normalize case
+    key = raw.rstrip("*+~#%$@").lower()
+    return _SLURM_STATE_MAP.get(key, NodeState.UNKNOWN)
 
 
 def slurm_int_to_int(v) -> Optional[int]:
@@ -51,6 +95,9 @@ class SlurmJobDescription(JobDescriptionModel):
 
 
 class SlurmJobMetadata(JobMetadataModel):
+    job_id: str = Field(
+        validation_alias=AliasChoices("JobId", "jobId", "job_id"),
+    )
     standard_input: Optional[str] = Field(
         validation_alias=AliasChoices("StdIn", "standardInput"),
         default=None,
@@ -124,12 +171,55 @@ class JobTaskSlurm(JobTask):
 
 class SlurmJob(JobModel):
 
+    user: Optional[str] = Field(
+        validation_alias=AliasChoices("user_name", "userName"),
+        default=None,
+        nullable=True,
+    )
+    working_directory: str = Field(
+        validation_alias=AliasChoices(
+            "current_working_directory", "workingDirectory", "currentWorkingDirectory"
+        )
+    )
+    allocation_nodes: int
+
     tasks: Optional[List[JobTaskSlurm]] = Field(
         validation_alias=AliasChoices("steps"), default=None, nullable=True
     )
     time: JobTimeSlurm
 
     def __init__(self, **kwargs):
+        # Remove task field
+        if "tasks" in kwargs:
+            kwargs["tasks"] = None
+
+        # Custom nodes count extraction
+        if "allocation_nodes" not in kwargs and "job_resources" in kwargs:
+            if kwargs["job_resources"] and "nodes" in kwargs["job_resources"]:
+                nodes = kwargs["job_resources"]["nodes"]
+                if isinstance(nodes, dict):
+                    kwargs["allocation_nodes"] = nodes.get("count", 0)
+                else:
+                    kwargs["allocation_nodes"] = kwargs["job_resources"].get("allocated_hosts", 0)
+            else:
+                kwargs["allocation_nodes"] = 0
+
+        # Custom time field definition
+        if "time" not in kwargs and "start_time" in kwargs and "end_time" in kwargs:
+            start = slurm_int_to_int(kwargs["start_time"])
+            end = slurm_int_to_int(kwargs["end_time"])
+            limit = slurm_int_to_int(kwargs["time_limit"])
+            suspend_time = slurm_int_to_int(kwargs["suspend_time"])
+
+            if start is not None and end is not None:
+                kwargs["time"] = JobTimeSlurm(
+                    elapsed=None,
+                    start=start,
+                    end=end,
+                    suspended=suspend_time,
+                    limit=limit,
+                )
+
         # Custom status field definition
         if "exit_code" in kwargs:
             interruptSignal = None
@@ -142,8 +232,16 @@ class SlurmJob(JobModel):
                 interruptSignal = kwargs["exit_code"]["signal"]["id"]
 
             kwargs["status"] = JobStatusSlurm(
-                state=kwargs["state"]["current"],
-                stateReason=kwargs["state"]["reason"],
+                state=(
+                    kwargs["job_state"]
+                    if "job_state" in kwargs
+                    else kwargs["state"]["current"]
+                ),
+                stateReason=(
+                    kwargs["state_reason"]
+                    if "state_reason" in kwargs
+                    else kwargs["state"]["reason"]
+                ),
                 exitCode=exitCode,
                 interruptSignal=interruptSignal,
             )
@@ -162,10 +260,18 @@ class SlurmJob(JobModel):
 
 
 class SlurmNode(NodeModel):
-    pass
+    def __init__(self, **kwargs):
+        if "state" in kwargs:
+            state = kwargs.get("state", [])
+            kwargs["state"] = [_map_slurm_state(s) for s in state]
+        super().__init__(**kwargs)
 
 
 class SlurmPing(SchedPing):
+    pass
+
+
+class SlurmAccounts(AccountsModel):
     pass
 
 
@@ -200,8 +306,23 @@ class SlurmReservations(ReservationModel):
     end_time: int = Field(validation_alias=AliasChoices("endTime", "EndTime"))
     start_time: int = Field(validation_alias=AliasChoices("startTime", "StartTime"))
     features: Optional[str] = Field(validation_alias=AliasChoices("Features"))
+    state: Optional[str] = Field(
+        validation_alias=AliasChoices("state", "State"), default=None, nullable=True
+    )
 
     @field_validator("start_time", "end_time", mode="before")
     @classmethod
     def _parse_time(cls, v):
         return slurm_int_to_int(v)
+
+    @model_validator(mode="after")
+    def set_state(self):
+        if self.state is None:
+            now = int(datetime.now(timezone.utc).timestamp())
+            if self.start_time <= now < self.end_time:
+                self.state = "active"
+            else:
+                self.state = "inactive"
+        elif not self.state.islower():
+            self.state = self.state.lower()
+        return self

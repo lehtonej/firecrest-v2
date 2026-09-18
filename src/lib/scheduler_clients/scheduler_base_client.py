@@ -8,9 +8,11 @@ from abc import ABC, abstractmethod
 
 # models
 from lib.scheduler_clients.models import (
+    AccountsModel,
     JobMetadataModel,
     JobModel,
     JobDescriptionModel,
+    JobsTimeWindow,
     NodeModel,
     PartitionModel,
     ReservationModel,
@@ -25,7 +27,7 @@ class SchedulerBaseClient(ABC):
         job_description: JobDescriptionModel,
         username: str,
         jwt_token: str,
-    ) -> int | None:
+    ) -> str | None:
         pass
 
     @abstractmethod
@@ -35,17 +37,13 @@ class SchedulerBaseClient(ABC):
         job_id: str,
         username: str,
         jwt_token: str,
-    ) -> int | None:
+    ) -> None:
         pass
 
     @abstractmethod
     # Note: returns multiple jobs to deal with job_id duplicates (see Slurm doc)
     async def get_job(
-        self,
-        job_id: str,
-        username: str,
-        jwt_token: str,
-        allusers: bool = True
+        self, job_id: str, username: str, jwt_token: str, allusers: bool = True
     ) -> List[JobModel]:
         pass
 
@@ -61,7 +59,10 @@ class SchedulerBaseClient(ABC):
         self,
         username: str,
         jwt_token: str,
-        allusers: bool = False
+        allusers: bool = False,
+        account: str = None,
+        name: str = None,
+        time_window: JobsTimeWindow = JobsTimeWindow.LAST_24_HOURS,
     ) -> List[JobModel] | None:
         pass
 
@@ -80,7 +81,13 @@ class SchedulerBaseClient(ABC):
         pass
 
     @abstractmethod
-    async def get_partitions(
+    async def get_accounts(
         self, username: str, jwt_token: str
+    ) -> List[AccountsModel] | None:
+        pass
+
+    @abstractmethod
+    async def get_partitions(
+        self, show_hidden: bool, username: str, jwt_token: str
     ) -> List[PartitionModel] | None:
         pass

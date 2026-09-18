@@ -4,10 +4,51 @@
 # SPDX-License-Identifier: BSD-3-Clause
 
 # models
-from typing import List, Optional, Dict
+from enum import Enum
+from typing import List, Optional, Dict, Tuple
 from lib.models import CamelModel
 
 from pydantic import Field, AliasChoices
+
+
+class JobsTimeWindow(str, Enum):
+    LAST_HOUR = "1h"
+    LAST_8_HOURS = "8h"
+    LAST_24_HOURS = "24h"
+    LAST_3_DAYS = "3d"
+    LAST_7_DAYS = "7d"
+
+
+# Canonical (amount, unit) duration for each historical time window. `unit`
+# doubles as both a `datetime.timedelta` keyword argument (used by the Slurm
+# REST client to compute an absolute start time) and a sacct/squeue
+# relative-time suffix (used by the Slurm CLI client to build
+# `--starttime=now-<amount><unit>`). `unit` must stay plural here --
+# `timedelta` only accepts plural keyword arguments (`hours`, not `hour`) --
+# any singular-for-grammar adjustment (e.g. "1 hour" vs "1 hours") is done
+# separately, only for CLI command rendering, in sacct_base.py.
+TIME_WINDOW_DURATIONS: Dict[JobsTimeWindow, Tuple[int, str]] = {
+    JobsTimeWindow.LAST_HOUR: (1, "hours"),
+    JobsTimeWindow.LAST_8_HOURS: (8, "hours"),
+    JobsTimeWindow.LAST_24_HOURS: (24, "hours"),
+    JobsTimeWindow.LAST_3_DAYS: (3, "days"),
+    JobsTimeWindow.LAST_7_DAYS: (7, "days"),
+}
+
+
+class NodeState(str, Enum):
+    IDLE = "IDLE"
+    ALLOCATED = "ALLOCATED"
+    MIXED = "MIXED"
+    DOWN = "DOWN"
+    DRAIN = "DRAIN"
+    OFFLINE = "OFFLINE"
+    RESERVED = "RESERVED"
+    COMPLETING = "COMPLETING"
+    BUSY = "BUSY"
+    POWERING_DOWN = "POWERING_DOWN"
+    POWERING_UP = "POWERING_UP"
+    UNKNOWN = "UNKNOWN"
 
 
 class SchedPing(CamelModel):
@@ -74,6 +115,16 @@ class JobDescriptionModel(CamelModel):
         description="Charge job resources to specified account",
         nullable=True,
     )
+    reservation: Optional[str] = Field(
+        default=None,
+        description="Reservation to be used for the job",
+        nullable=True,
+    )
+    partition: Optional[str] = Field(
+        default=None,
+        description="Partition to be used for the job",
+        nullable=True,
+    )
     current_working_directory: str = Field(
         validation_alias=AliasChoices("workingDirectory", "working_directory"),
         description="Job working directory",
@@ -117,7 +168,7 @@ class NodeModel(CamelModel):
     name: str
     address: Optional[str] = Field(default=None, nullable=True)
     hostname: Optional[str] = Field(default=None, nullable=True)
-    state: str | List[str]
+    state: List[NodeState]
     partitions: Optional[List[str]] = Field(default=None, nullable=True)
     weight: Optional[int] = Field(default=None, nullable=True)
     alloc_memory: Optional[int] = Field(default=None, nullable=True)
@@ -131,6 +182,7 @@ class ReservationModel(CamelModel):
     end_time: int
     start_time: int
     features: Optional[str] = Field(default=None, nullable=True)
+    state: Optional[str] = Field(default=None, nullable=True)
 
 
 class PartitionModel(CamelModel):
@@ -138,3 +190,8 @@ class PartitionModel(CamelModel):
     cpus: int | None = None
     total_nodes: int | None = None
     partition: str | List[str]
+
+
+class AccountsModel(CamelModel):
+    name: str
+    default: bool

@@ -106,6 +106,27 @@ class SchedulerConnectionMode(str, Enum):
     ssh = "ssh"
 
 
+class BackendServiceType(str, Enum):
+    """Types of services that can be health-checked."""
+
+    external_storage = "s3"  # To be renamed to `external_storage` from version 2.6.0
+    filesystem = "filesystem"
+    ssh = "ssh"
+    scheduler = "scheduler"
+
+    # Special value used by the health checker to identify exceptions; not a real service type.
+    exception = "exception"
+
+    # Backward and forward compatibility to be removed from version 2.6.0
+    @classmethod
+    def _missing_(cls, value):
+        if value == "filesystems":
+            return cls.filesystem
+        if value == "storage":
+            return cls.external_storage
+        return None
+
+
 class Scheduler(CamelModel):
     """Cluster job scheduler configuration."""
 
@@ -165,20 +186,10 @@ class ServiceAccount(CamelModel):
     )
 
 
-class HealthCheckType(str, Enum):
-    """Types of services that can be health-checked."""
-
-    scheduler = "scheduler"
-    filesystem = "filesystem"
-    ssh = "ssh"
-    s3 = "s3"
-    exception = "exception"
-
-
 class BaseServiceHealth(CamelModel):
     """Base health status structure for services."""
 
-    service_type: HealthCheckType = Field(
+    service_type: BackendServiceType = Field(
         ..., description="Type of the service being checked."
     )
     last_checked: Optional[datetime] = Field(
@@ -241,7 +252,7 @@ class ProbingService(CamelModel):
 class ProbingServices(CamelModel):
     """Health check interval and list of services."""
 
-    services: Optional[dict[str, ProbingService]] = Field(
+    services: Optional[dict[BackendServiceType, ProbingService]] = Field(
         None, description="Services to be checked."
     )
     interval_check: int = Field(
@@ -370,6 +381,12 @@ class DataOperation(BaseModel):
 class FileSystem(CamelModel):
     """Defines a cluster file system and its type."""
 
+    @pydantic.field_validator("path", mode="before")
+    def normalize_path(cls, value):
+        if isinstance(value, str):
+            return os.path.normpath(value)
+        return value
+
     path: str = Field(..., description="Mount path for the file system.")
     data_type: FileSystemDataType = Field(..., description="File system purpose/type.")
     default_work_dir: bool = Field(
@@ -409,7 +426,8 @@ class SSHClientPool(CamelModel):
         None, description="Optional proxy port.", nullable=True
     )
     max_clients: int = Field(
-        100, description="Maximum number of concurrent SSH clients."
+        100,
+        description="Maximum number of concurrent SSH clients (not a hard limit, might be temporarily exceeded under heavy load).",
     )
     timeout: SSHTimeouts = Field(
         default_factory=SSHTimeouts, description="SSH timeout settings."

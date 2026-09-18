@@ -4,9 +4,13 @@
 # SPDX-License-Identifier: BSD-3-Clause
 
 import asyncio
-import time
-
-from firecrest.config import HPCCluster, HealthCheckException, DataTransferType
+from datetime import datetime, timezone
+from firecrest.config import (
+    BackendServiceType,
+    HPCCluster,
+    HealthCheckException,
+    DataTransferType,
+)
 
 from firecrest.status.health_check.checks.health_check_filesystem import (
     FilesystemHealthCheck,
@@ -40,6 +44,7 @@ class ClusterHealthChecker:
                 settings.auth.authentication.public_certs,
                 username_claim=settings.auth.authentication.username_claim,
                 jwk_algorithm=settings.auth.authentication.jwk_algorithm,
+                min_token_ttl=settings.auth.authentication.min_token_ttl,
             )
         else:
             self.token_decoder = token_decoder
@@ -49,6 +54,7 @@ class ClusterHealthChecker:
             client = AsyncOAuth2Client(
                 self.cluster.service_account.client_id,
                 self.cluster.service_account.secret.get_secret_value(),
+                token_endpoint_auth_method=settings.auth.authentication.token_endpoint_auth_method.value,
             )
 
             token = await client.fetch_token(
@@ -61,54 +67,56 @@ class ClusterHealthChecker:
             if self.cluster.probing.services is not None:
                 services = self.cluster.probing.services
 
-                if "scheduler" in services:
-                    sechedulerCheck = SchedulerHealthCheck(
+                if BackendServiceType.scheduler in services:
+                    schedulerCheck = SchedulerHealthCheck(
                         system=self.cluster,
                         auth=auth,
                         token=token,
-                        timeout=services["scheduler"].timeout,
+                        timeout=services[BackendServiceType.scheduler].timeout,
                     )
-                    checks += [sechedulerCheck.check()]
+                    checks += [schedulerCheck.check()]
 
-                if "ssh" in services:
+                if BackendServiceType.ssh in services:
                     sshCheck = SSHHealthCheck(
                         system=self.cluster,
                         auth=auth,
                         token=token,
-                        timeout=services["ssh"].timeout,
+                        timeout=services[BackendServiceType.ssh].timeout,
                     )
                     checks += [sshCheck.check()]
 
-                if "filesystems" in services:
+                if BackendServiceType.filesystem in services:
                     for filesystem in self.cluster.file_systems:
                         filesystemCheck = FilesystemHealthCheck(
                             system=self.cluster,
                             auth=auth,
                             token=token,
                             path=filesystem.path,
-                            timeout=services["filesystems"].timeout,
+                            timeout=services[BackendServiceType.filesystem].timeout,
                         )
                         checks += [filesystemCheck.check()]
 
-                if "storage" in services:
+                if BackendServiceType.external_storage in services:
                     match self.cluster.data_operation.data_transfer.service_type:
                         case DataTransferType.s3:
                             s3Check = S3HealthCheck(
                                 data_transfer=self.cluster.data_operation.data_transfer,
-                                timeout=services["storage"].timeout,
+                                timeout=services[
+                                    BackendServiceType.external_storage
+                                ].timeout,
                             )
                             checks += [s3Check.check()]
 
             results = await asyncio.gather(*checks, return_exceptions=True)
             self.cluster.servicesHealth = results
-            self.cluster.last_health_check = time.time()
+            self.cluster.last_health_check = datetime.now(timezone.utc)
         except Exception as ex:
             error_message = f"Cluster HealthChecker execution failed with error: {ex.__class__.__name__}"
             if len(str(ex)) > 0:
                 error_message = f"Cluster HealthChecker execution failed with error: {ex.__class__.__name__} - {str(ex)}"
             exception = HealthCheckException(service_type="exception")
             exception.healthy = False
-            exception.last_checked = time.time()
+            exception.last_checked = datetime.now(timezone.utc)
             exception.message = error_message
             self.cluster.servicesHealth = [exception]
             # Note: raising the exception might not be handled well by apscheduler.

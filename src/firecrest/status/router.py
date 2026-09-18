@@ -4,11 +4,11 @@
 # SPDX-License-Identifier: BSD-3-Clause
 
 from datetime import datetime, timezone
-from fastapi import Depends, HTTPException, Path, status
+from fastapi import Depends, HTTPException, Path, Query, status
 from typing import Annotated, Any
 
 # configs
-from firecrest.config import HPCCluster, HealthCheckType
+from firecrest.config import HPCCluster, BackendServiceType
 from firecrest.status.commands.id_command import IdCommand
 from firecrest.plugins import settings
 
@@ -136,12 +136,18 @@ async def get_system_partitions(
         Path(alias="system_name", description="Target system"),
         Depends(SchedulerClientDependency(ignore_health=True)),
     ] = None,
+    show_hidden: Annotated[
+        bool,
+        Query(
+            description="Show hidden partitions (only applies to Slurm scheduler).",
+        ),
+    ] = False,
 ) -> Any:
     username = ApiAuthHelper.get_auth().username
     access_token = ApiAuthHelper.get_access_token()
     try:
         partitions = await scheduler_client.get_partitions(
-            username=username, jwt_token=access_token
+            show_hidden=show_hidden, username=username, jwt_token=access_token
         )
         return {"partitions": partitions}
     except Exception as exc:
@@ -163,17 +169,43 @@ async def get_userinfo(
         Path(alias="system_name", description="Target system"),
         Depends(SSHClientDependency()),
     ],
+    scheduler_client: Annotated[
+        SchedulerBaseClient,
+        Path(alias="system_name", description="Target system"),
+        Depends(SchedulerClientDependency(ignore_health=True)),
+    ] = None,
     system: HPCCluster = Depends(
-        ServiceAvailabilityDependency(service_type=HealthCheckType.ssh),
+        ServiceAvailabilityDependency(service_type=BackendServiceType.ssh),
         use_cache=False,
     ),
 ) -> Any:
     username = ApiAuthHelper.get_auth().username
     access_token = ApiAuthHelper.get_access_token()
-    id = IdCommand(system.ssh.timeout.command_execution)
-    async with ssh_client.get_client(username, access_token) as (client):
-        output = await client.execute(id)
-        return output
+    try:
+        id_cmd = IdCommand(system.ssh.timeout.command_execution)
+        accounts = await scheduler_client.get_accounts(username, access_token)
+        async with ssh_client.get_client(username, access_token) as client:
+            id_result = await client.execute(id_cmd)
+            if isinstance(id_result, Exception):
+                raise id_result
+            if isinstance(accounts, Exception):
+                raise accounts
+            if id_result is None:
+                raise RuntimeError("Failed to retrieve user information")
+            user = id_result["user"]
+            groups = [
+                {
+                    "name": group["name"],
+                    "id": group["id"],
+                    "default": group["name"] == id_result["group"]["name"],
+                }
+                for group in id_result["groups"]
+            ]
+            return {"user": user, "groups": groups, "accounts": accounts}
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)
+        ) from exc
 
 
 @router_liveness.get(
@@ -185,19 +217,18 @@ async def get_userinfo(
 )
 async def get_liveness() -> Any:
 
-    oldest_check = -1
     healthcheck_runs = {}
-
-    # if not clusters are configured the health checker is not running
-    if len(settings.clusters) == 0:
-        oldest_check = 0
+    # Initialize oldest_check: 0 when no health-check has run yet or
+    # no clusters are configured and the health checker is not running
+    oldest_check = 0
 
     for cluster in settings.clusters:
-        time_difference = (
-            datetime.now(timezone.utc) - cluster.last_health_check
-        ).seconds
-        if time_difference > oldest_check:
-            oldest_check = time_difference
-        healthcheck_runs[cluster.name] = cluster.last_health_check
+        if cluster.last_health_check is not None:
+            time_difference = (
+                datetime.now(timezone.utc) - cluster.last_health_check
+            ).total_seconds()
+            if time_difference > oldest_check:
+                oldest_check = time_difference
+            healthcheck_runs[cluster.name] = cluster.last_health_check
 
-    return {"healthcheck_runs": healthcheck_runs, "last_update": oldest_check}
+    return {"healthcheck_runs": healthcheck_runs, "last_update": int(oldest_check)}
