@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [2.6.1]
 
+### Added
+
+- Added optional JWT `aud` validation. When enabled, a token is accepted only
+  when its `aud` records contain one of the accepted audiences listed
+  in server-side setting `auth.authentication.audience`. Validation is disabled
+  when `audience` setting is not present in FirecREST server configuration.
+
 ### Changed
 
 - Minimum JWT token ttl now defaults to 5 seconds (was 30). A token is only
