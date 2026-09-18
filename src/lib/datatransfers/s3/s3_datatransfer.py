@@ -228,7 +228,7 @@ class S3Datatransfer(DataTransferBase):
 
         async with self.s3_client_private:
             try:
-                await self.s3_client_private.create_bucket(**{"Bucket": username})
+                await self.s3_client_private.create_bucket(**{"Bucket": bucket_name})
                 # Update lifecycle only for new buckets (not throwing the BucketAlreadyOwnedByYou exception)
                 await self.s3_client_private.put_bucket_lifecycle_configuration(
                     Bucket=bucket_name,
