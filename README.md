@@ -26,7 +26,7 @@ FirecREST is a high performance proxy providing a standardized interface to acce
 The FirecREST demo allows you to run FirecREST on your machine and connect to your local HPC cluster using your personal credentials.
 This setup is for *illustrative and evaluation purposes only* and is *not intended for production use*.
 
-## Running the FirecREST v2 Demo  
+## Running the FirecREST v2 Demo
 
 Ensure that [Docker](https://www.docker.com/) is installed and running on your machine, then execute the following command to start the FirecREST v2 demo container:
 
@@ -47,7 +47,7 @@ To start a local Firecrest environment in VS Code right click the selected envir
 
 Alternatively, use the command line:
 ```console
-docker compose -f docker-compose.yml up
+docker compose -f docker-compose.yml up --build
 ```
 ## Local Environment
 
@@ -59,7 +59,7 @@ The environment comes with an identity provider (Keycloack) for authentication, 
 The environment comes with two predefined users:
 
 - **fireuser** this account represents an actual user
-- **firesrv** this account represents a service account 
+- **firesrv** this account represents a service account
 
 
 ## Accessing Firecrest

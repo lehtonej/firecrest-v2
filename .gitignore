@@ -172,7 +172,7 @@ tmp
 
 # Docker containers volumes
 
-/build/minio
+/build/seaweedfs
 
 # Docs
 ## Use Cases

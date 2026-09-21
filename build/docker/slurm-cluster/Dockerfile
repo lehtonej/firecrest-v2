@@ -58,4 +58,4 @@ RUN mkdir -p /run/mariadb && chown mysql:mysql /run/mariadb
 # Setup Munge
 RUN mkdir -p /run/munge && chown -R munge:munge /var/log/munge  && chown -R munge:munge /var/lib/munge  && chown -R munge:munge /run/munge && chown 755 /var/log/munge && chmod 755 /run/munge && chmod 755 /var/lib/munge
 
-ENTRYPOINT ["supervisord"]
+ENTRYPOINT ["supervisord", "-c", "/etc/supervisord.conf"]
