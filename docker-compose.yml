@@ -58,7 +58,7 @@ services:
     ports:
       - "${F7T_HOST_IP:-127.0.0.1}:8000:5000"
       - "${F7T_HOST_IP:-127.0.0.1}:5678:5678"
-      
+
 
   slurm:
     image: slurm
@@ -157,20 +157,20 @@ services:
      entrypoint: ["/bin/sh", "-c" , "/opt/keycloak/bin/kcadm.sh config credentials --server http://keycloak:8080/auth/ --realm master --user admin --password admin2 && /opt/keycloak/bin/kcadm.sh create users -r kcrealm -s username=fireuser -s enabled=true && /opt/keycloak/bin/kcadm.sh set-password -r kcrealm --username fireuser -p password"]
 
   # S3 backend
-  minio:
-    image: minio/minio:latest
-    command: minio server /data --console-address ":9001"
+  seaweedfs:
+    image: chrislusf/seaweedfs:4.47
+    command: mini -dir=/data -s3.port=9000
     environment:
-     MINIO_ROOT_USER: storage_access_key
-     MINIO_ROOT_PASSWORD: storage_secret_key
+     AWS_ACCESS_KEY_ID: storage_access_key
+     AWS_SECRET_ACCESS_KEY: storage_secret_key
     networks:
       firecrest-internal-v2:
         ipv4_address: 192.168.240.19
     ports:
-      - "${F7T_HOST_IP:-127.0.0.1}:9000:9000"
-      - "${F7T_HOST_IP:-127.0.0.1}:9001:9001"
+      - "${F7T_HOST_IP:-127.0.0.1}:9000:9000"   # S3 API
+      - "${F7T_HOST_IP:-127.0.0.1}:23646:23646" # Admin UI
     volumes:
-      - ./build/minio:/data:delegated
+      - ./build/seaweedfs:/data:delegated
   ssh-ca:
     image: deic-sshca
     depends_on:

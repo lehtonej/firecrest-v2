@@ -16,6 +16,7 @@ COPY ./build/docker/deic-sshca/main.go ./cmd/main.go
 
 ADD ./build/environment/keys/fireuser-key  /go/.ssh/ca-key
 ADD ./build/environment/keys/fireuser.pub  /go/.ssh/ca-key.pub
+RUN chmod 600 /go/.ssh/ca-key
 
 COPY ./build/docker/deic-sshca/boot.sh /go/boot.sh
 RUN  chmod +x /go/boot.sh
